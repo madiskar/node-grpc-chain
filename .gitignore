@@ -70,6 +70,9 @@ __data__/
 __dist__
 dist
 
+# Generated js and d.ts files from proto
+gen/
+
 # Typescript build info files
 tsconfig.tsbuildinfo
 
