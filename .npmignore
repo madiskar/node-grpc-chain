@@ -1,0 +1,15 @@
+.vscode/
+.git/
+gen/
+node_modules/
+proto/
+test/
+lib/
+
+.editorconfig
+.eslintignore
+.eslintrc
+.prettierrc.js
+.gitignore
+protoc.sh
+yarn.lock

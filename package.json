@@ -9,6 +9,7 @@
   "license": "MIT",
   "private": false,
   "scripts": {
+    "prepublish": "yarn compile",
     "compile": "tsc -b lib",
     "lint": "eslint './**/*.{js,ts,tsx}' --fix"
   },
