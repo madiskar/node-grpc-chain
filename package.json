@@ -1,7 +1,7 @@
 {
   "name": "@mdkr/grpc-chain",
-  "version": "0.1.0",
-  "description": "Collection of gRPC tools and middlewares for NodeJS",
+  "version": "0.1.2",
+  "description": "Enables the use of interceptors (middleware) for Node gRPC servers",
   "main": "./dist/index.js",
   "typings": "./dist/index.d.ts",
   "repository": "git@github.com:madiskar/node-grpc-tools.git",
@@ -12,6 +12,9 @@
     "prepublish": "yarn compile",
     "compile": "tsc -b lib",
     "lint": "eslint './**/*.{js,ts,tsx}' --fix"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "lint-staged": {
     "*.{ts,js}": [
