@@ -13,13 +13,14 @@ async function testInterceptor(call: ServiceCall<jspb.Message, jspb.Message>, ct
 }
 
 async function testController(call: grpc.ServerUnaryCall<TestMessage>, ctx: Context): Promise<TestMessage> {
+  chain<grpc.handleUnaryCall<TestMessage, TestMessage>>(TestService.rpcTest);
   return new TestMessage();
 }
 
 class TestServiceImpl implements ITestServiceServer {
   rpcTest = chain<grpc.handleUnaryCall<TestMessage, TestMessage>>(
     TestService.rpcTest,
-    (call: grpc.ServerUnaryCall<TestMessage>, ctx: Context, next: NextFunction): void => {
+    (call: ServiceCall<jspb.Message, jspb.Message>, ctx: Context, next: NextFunction) => {
       console.log('Interceptor1');
       return next(call, ctx);
     },
@@ -29,7 +30,7 @@ class TestServiceImpl implements ITestServiceServer {
 
   clientStreamTest = chain<grpc.handleClientStreamingCall<TestMessage, TestMessage>>(
     TestService.clientStreamTest,
-    (call: ServerReadableStreamRx<TestMessage>, ctx: Context) => {
+    (call: ServerReadableStreamRx<TestMessage>, ctx: Context): TestMessage => {
       call.source.subscribe((msg) => {
         console.log(`ClientStreamTest received [${ctx.reqId}]: ${JSON.stringify(msg.toObject())}`);
       });
@@ -40,7 +41,7 @@ class TestServiceImpl implements ITestServiceServer {
     },
   );
 
-  serverStreamTest: grpc.handleServerStreamingCall<TestMessage, TestMessage> = chain(
+  serverStreamTest = chain<grpc.handleServerStreamingCall<TestMessage, TestMessage>>(
     TestService.serverStreamTest,
     (call: ServerWritableStream<TestMessage>, ctx: Context): Observable<TestMessage> => {
       const obs = new Observable<TestMessage>();
@@ -51,11 +52,14 @@ class TestServiceImpl implements ITestServiceServer {
 
   biDirStreamTest: grpc.handleBidiStreamingCall<TestMessage, TestMessage> = chain(
     TestService.biDirStreamTest,
+    (call: ServiceCall<jspb.Message, jspb.Message>, ctx: Context, next: NextFunction) => {
+      return next(call, ctx);
+    },
     (call: ServerDuplexStreamRx<TestMessage, TestMessage>, ctx: Context): Observable<TestMessage> => {
       const obs = new Observable<TestMessage>();
-      call.source.subscribe((msg) => {
-        console.log(`BiDirStreamTest received [${ctx.reqId}]: ${JSON.stringify(msg.toObject())}`);
-      });
+      // call.source.subscribe((msg) => {
+      //   console.log(`BiDirStreamTest received [${ctx.reqId}]: ${JSON.stringify(msg.toObject())}`);
+      // });
       return obs;
     },
   );

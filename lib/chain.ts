@@ -102,7 +102,9 @@ export type Interceptor<T extends jspb.Message, V extends jspb.Message> = (
 /**
  * Union type for all call handlers.
  */
-export type ChainableHandler<T extends jspb.Message, V extends jspb.Message> = CallHandler<T, V> | Interceptor<T, V>;
+export type ChainableHandler<K extends CallHandler<T, V>, T extends jspb.Message, V extends jspb.Message> =
+  | K
+  | Interceptor<T, V>;
 
 /**
  * Custom error handler.
@@ -121,15 +123,31 @@ export interface ChainOptions {
   requestIdLength?: number;
 }
 
-type T<K> = K extends grpc.handleCall<infer T, unknown> ? T : never;
-type V<K> = K extends grpc.handleCall<unknown, infer V> ? V : never;
+type HandleCall<T extends jspb.Message, V extends jspb.Message> =
+  | grpc.handleBidiStreamingCall<T, V>
+  | grpc.handleClientStreamingCall<T, V>
+  | grpc.handleUnaryCall<T, V>
+  | grpc.handleServerStreamingCall<T, V>;
+
+type T<K> = K extends grpc.handleCall<infer T, infer _V> ? T : never;
+type V<K> = K extends grpc.handleCall<infer _T, infer V> ? V : never;
+
+type CallHandlerType<K extends HandleCall<T<K>, V<K>>> = K extends grpc.handleUnaryCall<T<K>, V<K>>
+  ? UnaryCallHandler<T<K>, V<K>>
+  : K extends grpc.handleBidiStreamingCall<T<K>, V<K>>
+  ? BidiStreamingCallHandler<T<K>, V<K>>
+  : K extends grpc.handleClientStreamingCall<T<K>, V<K>>
+  ? ClientStreamingCallHandler<T<K>, V<K>>
+  : K extends grpc.handleServerStreamingCall<T<K>, V<K>>
+  ? ServerStreamingCallHandler<T<K>, V<K>>
+  : never;
 
 /**
  * Call handling chain.
  */
-export type Chain = <K extends grpc.handleCall<T<K>, V<K>>>(
-  method: grpc.MethodDefinition<jspb.Message, jspb.Message>,
-  ...handlers: ChainableHandler<T<K>, V<K>>[]
+export type Chain = <K extends HandleCall<T<K>, V<K>>>(
+  method: grpc.MethodDefinition<T<K>, V<K>>,
+  ...handlers: ChainableHandler<CallHandlerType<K>, T<K>, V<K>>[]
 ) => K;
 
 /**
@@ -300,18 +318,22 @@ export function initChain(opts?: ChainOptions): Chain {
    * @param handlers user-provided `Interceptors` and a `CallHandler`. __IMPORTANT__: The last member
    * of this array should __always__ be the `CallHandler`.
    */
-  const chain = function <K extends grpc.handleCall<T<K>, V<K>>>(
-    method: grpc.MethodDefinition<jspb.Message, jspb.Message>,
-    ...handlers: ChainableHandler<T<K>, V<K>>[]
+  const chain = function <K extends HandleCall<T<K>, V<K>>>(
+    method: grpc.MethodDefinition<T<K>, V<K>>,
+    ...handlers: ChainableHandler<CallHandlerType<K>, T<K>, V<K>>[]
   ): K {
     // Last handler in the chain should be CallHandler
-    let callHandler: ChainableHandler<T<K>, V<K>> = handlers[handlers.length - 1];
+    let callHandler: ChainableHandler<CallHandlerType<K>, T<K>, V<K>> = handlers[handlers.length - 1];
     if (method.responseStream && method.requestStream) {
       // If our server is expected to respond with a stream, we wrap these handler
       // functions in a
-      callHandler = consumeBidiServerObservable(callHandler as BidiStreamingCallHandler<T<K>, V<K>>);
+      callHandler = consumeBidiServerObservable(callHandler as BidiStreamingCallHandler<T<K>, V<K>>) as CallHandlerType<
+        K
+      >;
     } else if (method.responseStream) {
-      callHandler = consumeServerObservable(callHandler as ServerStreamingCallHandler<T<K>, V<K>>);
+      callHandler = consumeServerObservable(callHandler as ServerStreamingCallHandler<T<K>, V<K>>) as CallHandlerType<
+        K
+      >;
     }
 
     // Loop over remaining handlers, which should be Interceptors. This results in
@@ -324,16 +346,20 @@ export function initChain(opts?: ChainOptions): Chain {
         (handlers[i] as Interceptor<T<K>, V<K>>)(call, ctx, nextHandler as NextFunction);
     }
 
+    // FIXME: Somewhat of a hack to get Typescript to play ball, should probably look
+    // for a better solution at some point.
+    const methodJspb = (method as unknown) as grpc.MethodDefinition<jspb.Message, jspb.Message>;
+
     // Wrap the whole chain in a gRPC compatible function. These functions also perform exception
     // catching as well as some resource closing
     if (method.responseStream && method.requestStream) {
-      return wrapBidiStreamingCall(method, callHandler as BidiStreamingCallHandler<T<K>, V<K>>, opts) as K;
+      return wrapBidiStreamingCall(methodJspb, callHandler as BidiStreamingCallHandler<T<K>, V<K>>, opts) as K;
     } else if (method.responseStream) {
-      return wrapServerStreamingCall(method, callHandler as ServerStreamingCallHandler<T<K>, V<K>>, opts) as K;
+      return wrapServerStreamingCall(methodJspb, callHandler as ServerStreamingCallHandler<T<K>, V<K>>, opts) as K;
     } else if (method.requestStream) {
-      return wrapClientStreamingCall(method, callHandler as ClientStreamingCallHandler<T<K>, V<K>>, opts) as K;
+      return wrapClientStreamingCall(methodJspb, callHandler as ClientStreamingCallHandler<T<K>, V<K>>, opts) as K;
     } else {
-      return wrapUnaryCall(method, callHandler as UnaryCallHandler<T<K>, V<K>>, opts) as K;
+      return wrapUnaryCall(methodJspb, callHandler as UnaryCallHandler<T<K>, V<K>>, opts) as K;
     }
   };
 

@@ -66,10 +66,6 @@ typings/
 # persistent data
 __data__/
 
-# Typescript build folders
-__dist__
-dist
-
 # Generated js and d.ts files from proto
 gen/
 
@@ -88,7 +84,7 @@ lib/
 
 .editorconfig
 .eslintignore
-.eslintrc
+.eslintrc.js
 .prettierrc.js
 .gitignore
 protoc.sh
