@@ -1,6 +1,6 @@
 {
   "name": "@mdkr/grpc-chain",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Enables the use of interceptors (middleware) for Node gRPC servers",
   "main": "./dist/index.js",
   "typings": "./dist/index.d.ts",
