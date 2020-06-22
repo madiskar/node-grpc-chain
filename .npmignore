@@ -63,12 +63,6 @@ typings/
 # Dolphin directory files
 .directory
 
-# persistent data
-__data__/
-
-# Generated js and d.ts files from proto
-gen/
-
 # Typescript build info files
 tsconfig.tsbuildinfo
 
@@ -78,7 +72,6 @@ tsconfig.tsbuildinfo
 
 .vscode/
 .git/
-proto/
 test/
 lib/
 

@@ -3032,11 +3032,6 @@ run-async@^2.4.0:
   resolved "https://registry.npmjs.org/run-async/-/run-async-2.4.1.tgz#8440eccf99ea3e70bd409d49aab88e10c189a455"
   integrity sha512-tvVnVv01b8c1RrA6Ep7JkStj85Guv/YrMcwqYQnwjsAS2cTmmPGBBjAjpCW7RrSodNSoE2/qg9O4bceNvUuDgQ==
 
-rxjs-stream@^3.2.1:
-  version "3.2.1"
-  resolved "https://registry.npmjs.org/rxjs-stream/-/rxjs-stream-3.2.1.tgz#928e356150a917d6f741e2e08339414fdcbd71f1"
-  integrity sha512-SbubqPmtaEU1YZEU3HChFutKCKc4uB3kMykaciP+yH7hoq9UY5zC85OoviCf+woWMngXBUfEziFNRwsh59mgJA==
-
 rxjs@^6.5.3, rxjs@^6.5.5:
   version "6.5.5"
   resolved "https://registry.npmjs.org/rxjs/-/rxjs-6.5.5.tgz#c5c884e3094c8cfee31bf27eb87e54ccfc87f9ec"
