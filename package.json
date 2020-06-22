@@ -11,8 +11,7 @@
   "scripts": {
     "prepublish": "yarn compile",
     "compile": "tsc -b lib",
-    "lint": "eslint './**/*.{js,ts,tsx}' --fix",
-    "run-test-server": "node ./dist/examples/server.js"
+    "lint": "eslint './**/*.{js,ts,tsx}' --fix"
   },
   "publishConfig": {
     "access": "public"
