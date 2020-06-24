@@ -23,9 +23,9 @@ export class Context {
   }
 }
 
-export type NextGate = () => void;
+export type NextFunction = () => void;
 
-export type TunnelGate<T extends jspb.Message> = (payload: T, nextGate: NextGate) => void;
+export type TunnelGate<T extends jspb.Message> = (payload: T, next: NextFunction) => void;
 
 export class Tunnel<T extends jspb.Message> {
   private gates: TunnelGate<T>[] = [];
@@ -38,11 +38,13 @@ export class Tunnel<T extends jspb.Message> {
     if (this.gates.length === 0 && cb) {
       cb(true);
     }
+
     if (index >= this.gates.length) {
       return;
     }
+
     this.gates[index](payload, () => {
-      if (index === this.gates.length - 2 && cb) {
+      if (index === this.gates.length - 1 && cb) {
         cb(true);
       }
       this.passPayload(payload, index + 1, cb);
@@ -135,7 +137,7 @@ export type GenericServiceCall =
  */
 export type UnaryCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerUnaryCall<T, V>,
-  next: NextFunction,
+  ready: ReadyFunction,
 ) => void;
 
 /**
@@ -143,7 +145,7 @@ export type UnaryCallHandler<T extends jspb.Message, V extends jspb.Message> = (
  */
 export type ClientStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerReadableStream<T, V>,
-  next: NextFunction,
+  ready: ReadyFunction,
 ) => void;
 
 /**
@@ -151,7 +153,7 @@ export type ClientStreamingCallHandler<T extends jspb.Message, V extends jspb.Me
  */
 export type ServerStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerWritableStream<T, V>,
-  next: NextFunction,
+  ready: ReadyFunction,
 ) => void;
 
 /**
@@ -159,10 +161,10 @@ export type ServerStreamingCallHandler<T extends jspb.Message, V extends jspb.Me
  */
 export type BidiStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerDuplexStream<T, V>,
-  next: NextFunction,
+  ready: ReadyFunction,
 ) => void;
 
-export type GenericCallHandler = (call: GenericServiceCall, next: NextFunction) => void;
+export type GenericCallHandler = (call: GenericServiceCall, ready: ReadyFunction) => void;
 
 export type ChainCallHandler<T extends jspb.Message, V extends jspb.Message> =
   | BidiStreamingCallHandler<T, V>
@@ -172,9 +174,11 @@ export type ChainCallHandler<T extends jspb.Message, V extends jspb.Message> =
   | GenericCallHandler;
 
 /**
- * Represents an action to execute the next handler in the call chain.
+ * Sends a signal to the Chain that the handler is ready to accept
+ * inbound stream data (if the particular call has a request stream) and/or
+ * continue to the next call handler (if there is one).
  */
-export type NextFunction = () => void;
+export type ReadyFunction = () => void;
 
 /**
  * Custom error handler.
@@ -246,7 +250,7 @@ function executeHandlers<T extends jspb.Message, V extends jspb.Message>(
     return;
   }
   handlers[index](call, () => {
-    if (index === handlers.length - 2 && cb) {
+    if (index === handlers.length - 1 && cb) {
       cb(true);
     }
     executeHandlers(call, index + 1, handlers, cb);
@@ -352,7 +356,6 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       if (!passed) {
         return;
       }
-
       core.on('data', (payload: T) => {
         tun.passPayload(payload, 0);
       });
