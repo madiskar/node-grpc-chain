@@ -55,7 +55,7 @@ export class Tunnel<T extends jspb.Message> {
 export interface InboundTunneledStream<T extends jspb.Message> {
   _inTunnel: Tunnel<T>;
   onMsgIn: (gate: TunnelGate<T>) => void;
-  onInStreamEnded: (cb: () => void) => void;
+  onInStreamEnded: (cb: (err?: grpc.ServiceError | null) => void) => void;
 }
 
 export interface OutboundTunneledStream<V extends jspb.Message> {
@@ -65,13 +65,15 @@ export interface OutboundTunneledStream<V extends jspb.Message> {
   onMsgOut: (gate: TunnelGate<V>) => void;
   onMsgWritten: (cb: (err: Error | null | undefined, payload: V) => void) => void;
   endOutStream: () => void;
-  onOutStreamEnded: (cb: () => void) => void;
+  onOutStreamEnded: (cb: (err?: grpc.ServiceError | null) => void) => void;
 }
 
 export interface UnaryRespondable<V extends jspb.Message> {
   sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => void;
   sendUnaryErr: (err: Error | grpc.ServiceError) => void;
-  onUnaryDataSent: (cb: (payload: V, trailer?: grpc.Metadata, flags?: number) => void) => void;
+  onUnaryResponseSent: (
+    cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
+  ) => void;
 }
 
 export interface UnaryReadable<T extends jspb.Message> {
@@ -265,6 +267,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
   return (core: grpc.ServerUnaryCall<T>, callback: grpc.sendUnaryData<V>) => {
     const ctx = new Context(method);
     const evts = new EventEmitter();
+    let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerUnaryCall<T, V> = {
       core,
@@ -274,16 +277,19 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
 
       sendUnaryErr: async (err: Error | grpc.ServiceError) => {
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        const servErr = await errorHandler(err, call as never);
+        servErr = await errorHandler(err, call as never);
         callback(servErr, null);
+        evts.emit(EVT_UNARY_DATA_SENT, servErr);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
         callback(null, payload, trailer, flags);
-        evts.emit(EVT_UNARY_DATA_SENT, payload, trailer, flags);
+        evts.emit(EVT_UNARY_DATA_SENT, servErr, payload, trailer, flags);
       },
 
-      onUnaryDataSent: (cb: (payload: V, trailer?: grpc.Metadata, flags?: number) => void) => {
+      onUnaryResponseSent: (
+        cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
+      ) => {
         evts.once(EVT_UNARY_DATA_SENT, cb);
       },
     };
@@ -305,6 +311,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
     const ctx = new Context(method);
     const evts = new EventEmitter();
     const tun = new Tunnel<T>();
+    let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerReadableStream<T, V> = {
       core,
@@ -314,24 +321,27 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
 
       sendUnaryErr: async (err: Error | grpc.ServiceError) => {
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        const servErr = await errorHandler(err, call as never);
+        servErr = await errorHandler(err, call as never);
         callback(servErr, null);
+        evts.emit(EVT_UNARY_DATA_SENT, servErr);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
         callback(null, payload, trailer, flags);
-        evts.emit(EVT_UNARY_DATA_SENT, payload, trailer, flags);
+        evts.emit(EVT_UNARY_DATA_SENT, servErr, payload, trailer, flags);
       },
 
       onMsgIn: (gate: TunnelGate<T>) => {
         tun.addGate(gate);
       },
 
-      onUnaryDataSent: (cb: (payload: V, trailer?: grpc.Metadata, flags?: number) => void) => {
+      onUnaryResponseSent: (
+        cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
+      ) => {
         evts.once(EVT_UNARY_DATA_SENT, cb);
       },
 
-      onInStreamEnded: (cb: () => void) => {
+      onInStreamEnded: (cb: (err?: grpc.ServiceError | null) => void) => {
         evts.once(EVT_IN_STREAM_ENDED, cb);
       },
     };
@@ -375,6 +385,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
     const ctx = new Context(method);
     const evts = new EventEmitter();
     const tun = new Tunnel<V>();
+    let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerWritableStream<T, V> = {
       core,
@@ -399,10 +410,10 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
 
       sendErr: async (err: Error | grpc.ServiceError) => {
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        const servErr = await errorHandler(err, call as never);
+        servErr = await errorHandler(err, call as never);
         core.once('error', () => {
           core.end();
-          evts.emit(EVT_OUT_STREAM_ENDED);
+          evts.emit(EVT_OUT_STREAM_ENDED, servErr);
         });
         core.emit('error', servErr);
       },
@@ -417,10 +428,10 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
 
       endOutStream: () => {
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_OUT_STREAM_ENDED, servErr);
       },
 
-      onOutStreamEnded: (cb: () => void) => {
+      onOutStreamEnded: (cb: (err?: grpc.ServiceError | null) => void) => {
         evts.once(EVT_OUT_STREAM_ENDED, cb);
       },
     };
@@ -443,6 +454,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
     const evts = new EventEmitter();
     const tunIn = new Tunnel<T>();
     const tunOut = new Tunnel<V>();
+    let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerDuplexStream<T, V> = {
       core,
@@ -475,10 +487,10 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
 
       sendErr: async (err: Error | grpc.ServiceError) => {
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        const servErr = await errorHandler(err, call as never);
+        servErr = await errorHandler(err, call as never);
         core.once('error', () => {
           core.end();
-          evts.emit(EVT_OUT_STREAM_ENDED);
+          evts.emit(EVT_OUT_STREAM_ENDED, servErr);
         });
         core.emit('error', servErr);
       },
@@ -493,10 +505,10 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
 
       endOutStream: () => {
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_OUT_STREAM_ENDED, servErr);
       },
 
-      onOutStreamEnded: (cb: () => void) => {
+      onOutStreamEnded: (cb: (err?: grpc.ServiceError | null) => void) => {
         evts.once(EVT_OUT_STREAM_ENDED, cb);
       },
     };
