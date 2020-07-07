@@ -1,4 +1,11 @@
-import grpc from 'grpc';
+import grpc from '@grpc/grpc-js';
+import {
+  handleServerStreamingCall,
+  handleBidiStreamingCall,
+  handleClientStreamingCall,
+  handleUnaryCall,
+  HandleCall,
+} from '@grpc/grpc-js/build/src/server-call';
 import * as jspb from 'google-protobuf';
 import { EventEmitter } from 'events';
 
@@ -10,17 +17,9 @@ const EVT_STREAM_MSG_WRITTEN = 'stream_msg_written';
 /**
  * Context of a specific call.
  */
-export class Context {
-  public readonly method: grpc.MethodDefinition<jspb.Message, jspb.Message>;
-
-  /**
-   * Request scoped variables
-   */
-  public locals: { [key: string]: unknown } = {};
-
-  constructor(method: grpc.MethodDefinition<jspb.Message, jspb.Message>) {
-    this.method = method;
-  }
+export interface Context {
+  method: grpc.MethodDefinition<jspb.Message, jspb.Message>;
+  locals: { [key: string]: unknown };
 }
 
 export type NextFunction = () => void;
@@ -77,11 +76,12 @@ export interface UnaryRespondable<V extends jspb.Message> {
 }
 
 export interface UnaryReadable<T extends jspb.Message> {
-  req: T;
+  req: T | null;
 }
 
-export interface Contextual {
+export interface Common {
   ctx: Context;
+  serviceErr?: grpc.ServiceError;
 }
 
 export interface ServerDuplexStreamCore<T extends jspb.Message, V extends jspb.Message> {
@@ -89,38 +89,38 @@ export interface ServerDuplexStreamCore<T extends jspb.Message, V extends jspb.M
 }
 
 export interface ServerReadableStreamCore<T extends jspb.Message, V extends jspb.Message> {
-  core: grpc.ServerReadableStream<T>;
+  core: grpc.ServerReadableStream<T, V>;
   callback: grpc.sendUnaryData<V>;
 }
 
-export interface ServerWritableStreamCore<T extends jspb.Message> {
-  core: grpc.ServerWritableStream<T>;
+export interface ServerWritableStreamCore<T extends jspb.Message, V extends jspb.Message> {
+  core: grpc.ServerWritableStream<T, V>;
 }
 
 export interface ServerUnaryCallCore<T extends jspb.Message, V extends jspb.Message> {
-  core: grpc.ServerUnaryCall<T>;
+  core: grpc.ServerUnaryCall<T, V>;
   callback: grpc.sendUnaryData<V>;
 }
 
 export type ChainServerDuplexStream<T extends jspb.Message, V extends jspb.Message> = ServerDuplexStreamCore<T, V> &
   InboundTunneledStream<T> &
   OutboundTunneledStream<V> &
-  Contextual;
+  Common;
 
 export type ChainServerReadableStream<T extends jspb.Message, V extends jspb.Message> = ServerReadableStreamCore<T, V> &
   InboundTunneledStream<T> &
   UnaryRespondable<V> &
-  Contextual;
+  Common;
 
-export type ChainServerWritableStream<T extends jspb.Message, V extends jspb.Message> = ServerWritableStreamCore<T> &
+export type ChainServerWritableStream<T extends jspb.Message, V extends jspb.Message> = ServerWritableStreamCore<T, V> &
   OutboundTunneledStream<V> &
   UnaryReadable<T> &
-  Contextual;
+  Common;
 
 export type ChainServerUnaryCall<T extends jspb.Message, V extends jspb.Message> = ServerUnaryCallCore<T, V> &
   UnaryRespondable<V> &
   UnaryReadable<T> &
-  Contextual;
+  Common;
 
 export type ChainServiceCall<T extends jspb.Message, V extends jspb.Message> =
   | ChainServerDuplexStream<T, V>
@@ -198,23 +198,23 @@ export interface ChainOptions {
   requestIdLength?: number;
 }
 
-type T<K> = K extends grpc.handleCall<infer T, infer _V> ? T : never;
-type V<K> = K extends grpc.handleCall<infer _T, infer V> ? V : never;
+type T<K> = K extends HandleCall<infer T, infer _V> ? T : never;
+type V<K> = K extends HandleCall<infer _T, infer V> ? V : never;
 
-type CallHandler<K extends grpc.handleCall<T<K>, V<K>>> = K extends grpc.handleUnaryCall<T<K>, V<K>>
+type CallHandler<K extends HandleCall<T<K>, V<K>>> = K extends handleUnaryCall<T<K>, V<K>>
   ? UnaryCallHandler<T<K>, V<K>> | GenericCallHandler
-  : K extends grpc.handleBidiStreamingCall<T<K>, V<K>>
+  : K extends handleBidiStreamingCall<T<K>, V<K>>
   ? BidiStreamingCallHandler<T<K>, V<K>> | GenericCallHandler
-  : K extends grpc.handleClientStreamingCall<T<K>, V<K>>
+  : K extends handleClientStreamingCall<T<K>, V<K>>
   ? ClientStreamingCallHandler<T<K>, V<K>> | GenericCallHandler
-  : K extends grpc.handleServerStreamingCall<T<K>, V<K>>
+  : K extends handleServerStreamingCall<T<K>, V<K>>
   ? ServerStreamingCallHandler<T<K>, V<K>> | GenericCallHandler
   : never;
 
 /**
  * Call handling chain.
  */
-export type Chain = <K extends grpc.handleCall<T<K>, V<K>>>(
+export type Chain = <K extends HandleCall<T<K>, V<K>>>(
   method: grpc.MethodDefinition<T<K>, V<K>>,
   ...handlers: CallHandler<K>[]
 ) => K;
@@ -231,6 +231,8 @@ export function defaultErrorHandler(err: Error | grpc.ServiceError): grpc.Servic
       message: err.message,
       name: err.name,
       code: grpc.status.INTERNAL,
+      details: '',
+      metadata: new grpc.Metadata(),
     };
   } else {
     servErr = err;
@@ -264,10 +266,9 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
   handlers: UnaryCallHandler<T, V>[],
   chainOpts?: ChainOptions,
 ) {
-  return (core: grpc.ServerUnaryCall<T>, callback: grpc.sendUnaryData<V>) => {
-    const ctx = new Context(method);
+  return (core: grpc.ServerUnaryCall<T, V>, callback: grpc.sendUnaryData<V>) => {
+    const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
-    let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerUnaryCall<T, V> = {
       core,
@@ -276,15 +277,18 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
       req: core.request,
 
       sendUnaryErr: async (err: Error | grpc.ServiceError) => {
+        call.error = true;
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        servErr = await errorHandler(err, call as never);
-        callback(servErr, null);
-        evts.emit(EVT_UNARY_DATA_SENT, servErr);
+        call.serviceErr = await errorHandler(err, call as never);
+        callback(call.serviceErr, null);
+        evts.emit(EVT_UNARY_DATA_SENT, call.serviceErr);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
-        callback(null, payload, trailer, flags);
-        evts.emit(EVT_UNARY_DATA_SENT, servErr, payload, trailer, flags);
+        if (!call.error) {
+          callback(null, payload, trailer, flags);
+          evts.emit(EVT_UNARY_DATA_SENT, call.serviceErr, payload, trailer, flags);
+        }
       },
 
       onUnaryResponseSent: (
@@ -307,28 +311,31 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
   handlers: ClientStreamingCallHandler<T, V>[],
   chainOpts?: ChainOptions,
 ) {
-  return (core: grpc.ServerReadableStream<T>, callback: grpc.sendUnaryData<V>) => {
-    const ctx = new Context(method);
+  return (core: grpc.ServerReadableStream<T, V>, callback: grpc.sendUnaryData<V>) => {
+    const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
     const tun = new Tunnel<T>();
-    let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerReadableStream<T, V> = {
       core,
       callback,
       ctx,
+      error: false,
       _inTunnel: tun,
 
       sendUnaryErr: async (err: Error | grpc.ServiceError) => {
+        call.error = true;
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        servErr = await errorHandler(err, call as never);
-        callback(servErr, null);
-        evts.emit(EVT_UNARY_DATA_SENT, servErr);
+        call.serviceErr = await errorHandler(err, call as never);
+        callback(call.serviceErr, null);
+        evts.emit(EVT_UNARY_DATA_SENT, call.serviceErr);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
-        callback(null, payload, trailer, flags);
-        evts.emit(EVT_UNARY_DATA_SENT, servErr, payload, trailer, flags);
+        if (!call.error) {
+          callback(null, payload, trailer, flags);
+          evts.emit(EVT_UNARY_DATA_SENT, call.serviceErr, payload, trailer, flags);
+        }
       },
 
       onMsgIn: (gate: TunnelGate<T>) => {
@@ -381,19 +388,26 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
   handlers: ServerStreamingCallHandler<T, V>[],
   chainOpts?: ChainOptions,
 ) {
-  return (core: grpc.ServerWritableStream<T>) => {
-    const ctx = new Context(method);
+  return (core: grpc.ServerWritableStream<T, V>) => {
+    const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
     const tun = new Tunnel<V>();
+    let error = false;
     let servErr: grpc.ServiceError | null = null;
 
     const call: ChainServerWritableStream<T, V> = {
       core,
       ctx,
       req: core.request,
+      error: false,
+
       _outTunnel: tun,
 
       sendMsg: (payload: V, cb?: (err?: Error | null) => void) => {
+        if (error) {
+          return;
+        }
+
         tun.passPayload(payload, 0, (passed) => {
           if (!passed) {
             return;
@@ -409,6 +423,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
       },
 
       sendErr: async (err: Error | grpc.ServiceError) => {
+        error = true;
         const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
         servErr = await errorHandler(err, call as never);
         core.once('error', () => {
@@ -450,7 +465,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
   chainOpts?: ChainOptions,
 ) {
   return (core: grpc.ServerDuplexStream<T, V>) => {
-    const ctx = new Context(method);
+    const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
     const tunIn = new Tunnel<T>();
     const tunOut = new Tunnel<V>();
@@ -476,9 +491,9 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
             return;
           }
 
-          core.write(payload, (err) => {
+          core.write(payload, () => {
             if (cb) {
-              cb(err);
+              cb();
             }
             evts.emit(EVT_STREAM_MSG_WRITTEN, err, payload);
           });
@@ -559,7 +574,7 @@ export function initChain(opts?: ChainOptions): Chain {
    * @param handlers user-provided `Interceptors` and a `CallHandler`. __IMPORTANT__: The last member
    * of this array should __always__ be the `CallHandler`.
    */
-  const chain = function <K extends grpc.handleCall<T<K>, V<K>>>(
+  const chain = function <K extends HandleCall<T<K>, V<K>>>(
     method: grpc.MethodDefinition<T<K>, V<K>>,
     ...handlers: CallHandler<K>[]
   ): K {
