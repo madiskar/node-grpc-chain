@@ -82,3 +82,5 @@ lib/
 .gitignore
 protoc.sh
 yarn.lock
+tsconfig.json
+.nycrc

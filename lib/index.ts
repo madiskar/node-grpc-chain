@@ -1,4 +1,4 @@
-import grpc from '@grpc/grpc-js';
+import * as grpc from '@grpc/grpc-js';
 import {
   handleServerStreamingCall,
   handleBidiStreamingCall,
@@ -60,7 +60,7 @@ export interface InboundTunneledStream<T extends jspb.Message> {
 export interface OutboundTunneledStream<V extends jspb.Message> {
   _outTunnel: Tunnel<V>;
   sendMsg: (payload: V, cb?: () => void) => void;
-  sendErr: (err: Error | grpc.ServiceError) => void;
+  sendErr: (err: grpc.ServiceError) => void;
   onMsgOut: (gate: TunnelGate<V>) => void;
   onMsgWritten: (cb: (payload: V) => void) => void;
   endOutStream: () => void;
@@ -69,7 +69,7 @@ export interface OutboundTunneledStream<V extends jspb.Message> {
 
 export interface UnaryRespondable<V extends jspb.Message> {
   sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => void;
-  sendUnaryErr: (err: Error | grpc.ServiceError) => void;
+  sendUnaryErr: (err: grpc.ServiceError) => void;
   onUnaryResponseSent: (
     cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
   ) => void;
@@ -186,7 +186,7 @@ export type ReadyFunction = () => void;
  * Custom error handler.
  */
 export type ServiceErrorHandler = (
-  err: Error | grpc.ServiceError,
+  err: grpc.ServiceError,
   call: GenericServiceCall,
 ) => Promise<grpc.ServiceError> | grpc.ServiceError;
 
@@ -195,7 +195,6 @@ export type ServiceErrorHandler = (
  */
 export interface ChainOptions {
   errorHandler?: ServiceErrorHandler;
-  requestIdLength?: number;
 }
 
 type T<K> = K extends HandleCall<infer T, infer _V> ? T : never;
@@ -219,37 +218,12 @@ export type Chain = <K extends HandleCall<T<K>, V<K>>>(
   ...handlers: CallHandler<K>[]
 ) => K;
 
-/**
- * Default error handler.
- *
- * @param err `Error` to handle
- */
-export function defaultErrorHandler(err: Error | grpc.ServiceError): grpc.ServiceError {
-  let servErr: grpc.ServiceError;
-  if (err instanceof Error) {
-    servErr = {
-      message: err.message,
-      name: err.name,
-      code: grpc.status.INTERNAL,
-      details: '',
-      metadata: new grpc.Metadata(),
-    };
-  } else {
-    servErr = err;
-  }
-
-  return servErr;
-}
-
 function executeHandlers<T extends jspb.Message, V extends jspb.Message>(
   call: never,
   index: number,
   handlers: ChainCallHandler<T, V>[],
   cb?: (passed: boolean) => void,
 ) {
-  if (handlers.length === 0) {
-    throw new Error('Expected at least 1 handler');
-  }
   if (index >= handlers.length) {
     return;
   }
@@ -264,7 +238,7 @@ function executeHandlers<T extends jspb.Message, V extends jspb.Message>(
 function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
   method: grpc.MethodDefinition<jspb.Message, jspb.Message>,
   handlers: UnaryCallHandler<T, V>[],
-  chainOpts?: ChainOptions,
+  chainOpts: ChainOptions,
 ) {
   return (core: grpc.ServerUnaryCall<T, V>, callback: grpc.sendUnaryData<V>) => {
     const ctx: Context = { method, locals: {} };
@@ -277,10 +251,14 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
       ctx,
       req: core.request,
 
-      sendUnaryErr: async (err: Error | grpc.ServiceError) => {
+      sendUnaryErr: async (err: grpc.ServiceError) => {
         error = true;
-        const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        call.err = await errorHandler(err, call as never);
+        const errorHandler = chainOpts.errorHandler;
+        if (errorHandler) {
+          call.err = await errorHandler(err, call as never);
+        } else {
+          call.err = err;
+        }
         callback(call.err, null);
         evts.emit(EVT_UNARY_DATA_SENT, call.err);
       },
@@ -310,7 +288,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
 function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>(
   method: grpc.MethodDefinition<jspb.Message, jspb.Message>,
   handlers: ClientStreamingCallHandler<T, V>[],
-  chainOpts?: ChainOptions,
+  chainOpts: ChainOptions,
 ) {
   return (core: grpc.ServerReadableStream<T, V>, callback: grpc.sendUnaryData<V>) => {
     const ctx: Context = { method, locals: {} };
@@ -324,11 +302,14 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       ctx,
       _inTunnel: tun,
 
-      sendUnaryErr: async (err: Error | grpc.ServiceError) => {
+      sendUnaryErr: async (err: grpc.ServiceError) => {
         error = true;
-        const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        call.err = await errorHandler(err, call as never);
-        callback(call.err, null);
+        const errorHandler = chainOpts.errorHandler;
+        if (errorHandler) {
+          call.err = await errorHandler(err, call as never);
+        } else {
+          call.err = err;
+        }
         evts.emit(EVT_UNARY_DATA_SENT, call.err);
       },
 
@@ -387,7 +368,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
 function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>(
   method: grpc.MethodDefinition<jspb.Message, jspb.Message>,
   handlers: ServerStreamingCallHandler<T, V>[],
-  chainOpts?: ChainOptions,
+  chainOpts: ChainOptions,
 ) {
   return (core: grpc.ServerWritableStream<T, V>) => {
     const ctx: Context = { method, locals: {} };
@@ -420,10 +401,14 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         });
       },
 
-      sendErr: async (err: Error | grpc.ServiceError) => {
+      sendErr: async (err: grpc.ServiceError) => {
         error = true;
-        const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        call.err = await errorHandler(err, call as never);
+        const errorHandler = chainOpts.errorHandler;
+        if (errorHandler) {
+          call.err = await errorHandler(err, call as never);
+        } else {
+          call.err = err;
+        }
         core.once('error', () => {
           core.end();
           evts.emit(EVT_OUT_STREAM_ENDED);
@@ -460,7 +445,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
 function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
   method: grpc.MethodDefinition<jspb.Message, jspb.Message>,
   handlers: BidiStreamingCallHandler<T, V>[],
-  chainOpts?: ChainOptions,
+  chainOpts: ChainOptions,
 ) {
   return (core: grpc.ServerDuplexStream<T, V>) => {
     const ctx: Context = { method, locals: {} };
@@ -502,10 +487,14 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         });
       },
 
-      sendErr: async (err: Error | grpc.ServiceError) => {
+      sendErr: async (err: grpc.ServiceError) => {
         error = true;
-        const errorHandler = chainOpts?.errorHandler ?? defaultErrorHandler;
-        call.err = await errorHandler(err, call as never);
+        const errorHandler = chainOpts.errorHandler;
+        if (errorHandler) {
+          call.err = await errorHandler(err, call as never);
+        } else {
+          call.err = err;
+        }
         core.once('error', () => {
           core.end();
           evts.emit(EVT_OUT_STREAM_ENDED);
@@ -567,7 +556,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
  *
  * @param errorHandler optional custom error handler
  */
-export function initChain(opts?: ChainOptions): Chain {
+export function initChain(opts: ChainOptions = {}): Chain {
   // We define the `chain` as a named function so that we can add documentation.
 
   /**
@@ -581,8 +570,12 @@ export function initChain(opts?: ChainOptions): Chain {
     method: grpc.MethodDefinition<T<K>, V<K>>,
     ...handlers: CallHandler<K>[]
   ): K {
-    // FIXME: Somewhat of a hack to get Typescript to play ball, should probably look
-    // for a better solution at some point.
+    if (handlers.length === 0) {
+      throw new Error('Expected at least 1 handler');
+    }
+
+    // Somewhat of a hack to get Typescript to play ball, should probably look
+    // for a better solution/
     const methodJspb = (method as unknown) as grpc.MethodDefinition<jspb.Message, jspb.Message>;
 
     // Wrap the whole chain in a gRPC compatible function. These functions also perform exception
