@@ -21,6 +21,6 @@
     "text",
     "text-summary"
   ],
-  "all": true,
+  "all": false,
   "instrument": true
 }

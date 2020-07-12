@@ -22,9 +22,9 @@ export interface Context {
   locals: { [key: string]: unknown };
 }
 
-export type NextFunction = () => void;
+export type NextGateFunction = () => void;
 
-export type TunnelGate<T extends jspb.Message> = (payload: T, next: NextFunction) => void;
+export type TunnelGate<T extends jspb.Message> = (payload: T, next: NextGateFunction) => void;
 
 export class Tunnel<T extends jspb.Message> {
   private gates: TunnelGate<T>[] = [];
@@ -33,9 +33,9 @@ export class Tunnel<T extends jspb.Message> {
     this.gates.push(gate);
   }
 
-  public passPayload(payload: T, index = 0, cb?: (passed: boolean) => void): void {
+  public passPayload(payload: T, index = 0, cb?: () => void): void {
     if (this.gates.length === 0 && cb) {
-      cb(true);
+      cb();
     }
 
     if (index >= this.gates.length) {
@@ -44,7 +44,7 @@ export class Tunnel<T extends jspb.Message> {
 
     this.gates[index](payload, () => {
       if (index === this.gates.length - 1 && cb) {
-        cb(true);
+        cb();
       }
       this.passPayload(payload, index + 1, cb);
     });
@@ -222,14 +222,14 @@ function executeHandlers<T extends jspb.Message, V extends jspb.Message>(
   call: never,
   index: number,
   handlers: ChainCallHandler<T, V>[],
-  cb?: (passed: boolean) => void,
+  cb?: () => void,
 ) {
   if (index >= handlers.length) {
     return;
   }
   handlers[index](call, () => {
     if (index === handlers.length - 1 && cb) {
-      cb(true);
+      cb();
     }
     executeHandlers(call, index + 1, handlers, cb);
   });
@@ -277,7 +277,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
       },
     };
 
-    evts.on(EVT_UNARY_DATA_SENT, () => {
+    evts.once(EVT_UNARY_DATA_SENT, () => {
       evts.removeAllListeners();
     });
 
@@ -310,6 +310,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         } else {
           call.err = err;
         }
+        callback(call.err, null);
         evts.emit(EVT_UNARY_DATA_SENT, call.err);
       },
 
@@ -317,6 +318,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         if (!error) {
           callback(null, payload, trailer, flags);
           evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
+          evts.emit(EVT_IN_STREAM_ENDED);
         }
       },
 
@@ -338,28 +340,26 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
     let inStreamEnded = false;
     let unaryDataSent = false;
 
-    evts.on(EVT_IN_STREAM_ENDED, () => {
+    evts.once(EVT_IN_STREAM_ENDED, () => {
       inStreamEnded = true;
       if (unaryDataSent) {
         evts.removeAllListeners();
       }
     });
-    evts.on(EVT_UNARY_DATA_SENT, () => {
+    evts.once(EVT_UNARY_DATA_SENT, () => {
       unaryDataSent = true;
       if (inStreamEnded) {
         evts.removeAllListeners();
       }
     });
 
-    executeHandlers(call as never, 0, handlers, (passed) => {
-      if (!passed) {
-        return;
-      }
+    core.on('end', () => {
+      evts.emit(EVT_IN_STREAM_ENDED);
+    });
+
+    executeHandlers(call as never, 0, handlers, () => {
       core.on('data', (payload: T) => {
         tun.passPayload(payload);
-      });
-      core.on('end', () => {
-        evts.emit(EVT_IN_STREAM_ENDED);
       });
     });
   };
@@ -387,11 +387,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
           return;
         }
 
-        tun.passPayload(payload, 0, (passed) => {
-          if (!passed) {
-            return;
-          }
-
+        tun.passPayload(payload, 0, () => {
           core.write(payload, () => {
             if (cb) {
               cb();
@@ -434,7 +430,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
       },
     };
 
-    evts.on(EVT_OUT_STREAM_ENDED, () => {
+    evts.once(EVT_OUT_STREAM_ENDED, () => {
       evts.removeAllListeners();
     });
 
@@ -473,11 +469,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
           return;
         }
 
-        tunOut.passPayload(payload, 0, (passed) => {
-          if (!passed) {
-            return;
-          }
-
+        tunOut.passPayload(payload, 0, () => {
           core.write(payload, () => {
             if (cb) {
               cb();
@@ -498,6 +490,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         core.once('error', () => {
           core.end();
           evts.emit(EVT_OUT_STREAM_ENDED);
+          evts.emit(EVT_IN_STREAM_ENDED);
         });
         core.emit('error', call.err);
       },
@@ -523,28 +516,26 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
     let inStreamEnded = false;
     let outStreamEnded = false;
 
-    evts.on(EVT_IN_STREAM_ENDED, () => {
+    evts.once(EVT_IN_STREAM_ENDED, () => {
       inStreamEnded = true;
       if (outStreamEnded) {
         evts.removeAllListeners();
       }
     });
-    evts.on(EVT_OUT_STREAM_ENDED, () => {
+    evts.once(EVT_OUT_STREAM_ENDED, () => {
       outStreamEnded = true;
       if (inStreamEnded) {
         evts.removeAllListeners();
       }
     });
 
-    executeHandlers(call as never, 0, handlers, (passed) => {
-      if (!passed) {
-        return;
-      }
+    core.on('end', () => {
+      evts.emit(EVT_IN_STREAM_ENDED);
+    });
+
+    executeHandlers(call as never, 0, handlers, () => {
       core.on('data', (payload: T) => {
         tunIn.passPayload(payload);
-      });
-      core.on('end', () => {
-        evts.emit(EVT_IN_STREAM_ENDED);
       });
     });
   };

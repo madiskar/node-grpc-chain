@@ -112,7 +112,7 @@ describe('Unary Calls', () => {
 
       server.start();
 
-      const result = await new Promise<grpc.ServiceError>((resolve, reject) => {
+      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
         createTestClient().rpcTest(new TestMessage(), (err) => {
           if (!err) {
             return reject(new Error('Expected an error'));
@@ -121,8 +121,390 @@ describe('Unary Calls', () => {
         });
       });
 
-      expect(result.code).to.equal(grpc.status.UNAUTHENTICATED);
-      expect(result.details).to.equal('Invalid token');
+      expect(err.code).to.equal(grpc.status.UNAUTHENTICATED);
+      expect(err.details).to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should execute onUnaryResponseSent callback', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const chain = lib.initChain();
+      let cbPayload: TestMessage | null = null;
+
+      server = await createTestServer({
+        rpcTest: chain(
+          TestService.rpcTest,
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            call.onUnaryResponseSent((err, payload) => {
+              cbPayload = payload;
+            });
+            ready();
+          },
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            const resp = new TestMessage();
+            resp.setText('Hello Test!');
+            call.sendUnaryData(resp);
+            ready();
+          },
+        ),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const payload = await new Promise<TestMessage>((resolve, reject) => {
+        createTestClient().rpcTest(new TestMessage(), (err, res) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(res);
+        });
+      });
+
+      expect(cbPayload).to.not.be.null;
+      expect(cbPayload.getText()).to.equal(payload.getText()).to.equal('Hello Test!');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should execute custom error handler', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      let handlerErr: grpc.ServiceError | null = null;
+
+      const chain = lib.initChain({
+        errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
+          handlerErr = err;
+          return err;
+        },
+      });
+
+      server = await createTestServer({
+        rpcTest: chain(
+          TestService.rpcTest,
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            call.sendUnaryErr({
+              code: grpc.status.UNAUTHENTICATED,
+              message: '',
+              name: 'Authentication error',
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+            ready();
+          },
+        ),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        createTestClient().rpcTest(new TestMessage(), (err) => {
+          if (!err) {
+            return reject(new Error('Expected an error'));
+          }
+          resolve(err);
+        });
+      });
+
+      expect(handlerErr).to.not.be.null;
+      expect(err.code).to.equal(handlerErr.code).to.equal(grpc.status.UNAUTHENTICATED);
+      expect(err.details).to.equal(handlerErr.details).to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+});
+
+describe('Client Streaming Calls', () => {
+  it('Should respond with a payload', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const chain = lib.initChain();
+      const incomingPayloads: TestMessage[] = [];
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(
+          TestService.clientStreamTest,
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            call.onMsgIn((payload: TestMessage, next: lib.NextGateFunction) => {
+              incomingPayloads.push(payload);
+              next();
+            });
+            call.onInStreamEnded(() => {
+              const payload = new TestMessage();
+              payload.setText('Hello Test!');
+              call.sendUnaryData(payload);
+            });
+            ready();
+          },
+        ),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const payload = await new Promise<TestMessage>((resolve, reject) => {
+        const stream = createTestClient().clientStreamTest((err, res) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(res);
+        });
+
+        const payload = new TestMessage();
+        payload.setText('Incoming_0');
+        stream.write(payload);
+
+        payload.setText('Incoming_1');
+        stream.write(payload);
+
+        stream.end();
+      });
+
+      expect(incomingPayloads).to.have.length(2);
+      expect(incomingPayloads[0].getText()).to.equal('Incoming_0');
+      expect(incomingPayloads[1].getText()).to.equal('Incoming_1');
+      expect(payload.getText()).to.equal('Hello Test!');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should respond with an error', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(
+          TestService.clientStreamTest,
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            call.sendUnaryErr({
+              code: grpc.status.UNAUTHENTICATED,
+              message: '',
+              name: 'Authentication error',
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+            ready();
+          },
+        ),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().clientStreamTest((err) => {
+          if (!err) {
+            return reject(new Error('Expected an error'));
+          }
+          resolve(err);
+        });
+        setTimeout(() => {
+          stream.end();
+          reject(new Error('Expected an error'));
+        }, 500);
+      });
+
+      expect(err.code).to.equal(grpc.status.UNAUTHENTICATED);
+      expect(err.details).to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should execute onUnaryResponseSent callback', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const chain = lib.initChain();
+      let cbPayload: TestMessage | null = null;
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(
+          TestService.clientStreamTest,
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            call.onUnaryResponseSent((err, payload) => {
+              cbPayload = payload;
+            });
+            ready();
+          },
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            const resp = new TestMessage();
+            resp.setText('Hello Test!');
+            call.sendUnaryData(resp);
+            ready();
+          },
+        ),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const payload = await new Promise<TestMessage>((resolve, reject) => {
+        const stream = createTestClient().clientStreamTest((err, res) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(res);
+        });
+        setTimeout(() => {
+          stream.end();
+          reject(new Error('Expected an error'));
+        }, 500);
+      });
+
+      expect(cbPayload).to.not.be.null;
+      expect(cbPayload.getText()).to.equal(payload.getText()).to.equal('Hello Test!');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should execute custom error handler', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      let handlerErr: grpc.ServiceError | null = null;
+
+      const chain = lib.initChain({
+        errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
+          handlerErr = err;
+          return err;
+        },
+      });
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(
+          TestService.clientStreamTest,
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, ready: lib.ReadyFunction) => {
+            call.sendUnaryErr({
+              code: grpc.status.UNAUTHENTICATED,
+              message: '',
+              name: 'Authentication error',
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+            ready();
+          },
+        ),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().clientStreamTest((err) => {
+          if (!err) {
+            return reject(new Error('Expected an error'));
+          }
+          resolve(err);
+        });
+        setTimeout(() => {
+          stream.end();
+          reject(new Error('Expected an error'));
+        }, 500);
+      });
+
+      expect(handlerErr).to.not.be.null;
+      expect(err.code).to.equal(handlerErr.code).to.equal(grpc.status.UNAUTHENTICATED);
+      expect(err.details).to.equal(handlerErr.details).to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should not continue to second handler', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const chain = lib.initChain();
+      let checkpoint1 = false;
+      let checkpoint2 = false;
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(
+          TestService.clientStreamTest,
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
+            checkpoint1 = true;
+            call.sendUnaryData(new TestMessage());
+          },
+          () => {
+            checkpoint2 = true;
+          },
+        ),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      await new Promise<TestMessage>((resolve, reject) => {
+        const stream = createTestClient().clientStreamTest((err, res) => {
+          if (err) {
+            return reject(err);
+          }
+          resolve(res);
+        });
+        setTimeout(() => {
+          stream.end();
+          reject(new Error('Expected an error'));
+        }, 500);
+      });
+
+      expect(checkpoint1).to.be.true;
+      expect(checkpoint2).to.be.false;
     } catch (err) {
       expect.fail(err);
     } finally {
