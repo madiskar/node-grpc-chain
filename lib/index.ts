@@ -13,6 +13,7 @@ const EVT_UNARY_DATA_SENT = 'unary_data_sent';
 const EVT_IN_STREAM_ENDED = 'in_stream_ended';
 const EVT_OUT_STREAM_ENDED = 'out_stream_ended';
 const EVT_STREAM_MSG_WRITTEN = 'stream_msg_written';
+const EVT_UNARY_CALL_CANCELLED = 'unary_call_cancelled';
 
 /**
  * Context of a specific call.
@@ -53,6 +54,7 @@ export class Tunnel<T extends jspb.Message> {
 
 export interface InboundTunneledStream<T extends jspb.Message> {
   _inTunnel: Tunnel<T>;
+  inStreamErr?: Error;
   onMsgIn: (gate: TunnelGate<T>) => void;
   onInStreamEnded: (cb: () => void) => void;
 }
@@ -60,7 +62,7 @@ export interface InboundTunneledStream<T extends jspb.Message> {
 export interface OutboundTunneledStream<V extends jspb.Message> {
   _outTunnel: Tunnel<V>;
   sendMsg: (payload: V, cb?: () => void) => void;
-  sendErr: (err: grpc.ServiceError) => void;
+  sendErr: (err: grpc.StatusObject) => void;
   onMsgOut: (gate: TunnelGate<V>) => void;
   onMsgWritten: (cb: (payload: V) => void) => void;
   endOutStream: () => void;
@@ -69,19 +71,21 @@ export interface OutboundTunneledStream<V extends jspb.Message> {
 
 export interface UnaryRespondable<V extends jspb.Message> {
   sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => void;
-  sendUnaryErr: (err: grpc.ServiceError) => void;
+  sendUnaryErr: (err: grpc.StatusObject) => void;
   onUnaryResponseSent: (
-    cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
+    cb: (err?: grpc.StatusObject | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
   ) => void;
 }
 
 export interface UnaryReadable<T extends jspb.Message> {
   req: T | null;
+  onCancelled: (cb: () => void) => void;
 }
 
 export interface Common {
   ctx: Context;
-  err?: grpc.ServiceError;
+  err?: Error | grpc.StatusObject;
+  cancelled: boolean;
 }
 
 export interface ServerDuplexStreamCore<T extends jspb.Message, V extends jspb.Message> {
@@ -186,9 +190,9 @@ export type ReadyFunction = () => void;
  * Custom error handler.
  */
 export type ServiceErrorHandler = (
-  err: grpc.ServiceError,
+  err: grpc.StatusObject,
   call: GenericServiceCall,
-) => Promise<grpc.ServiceError> | grpc.ServiceError;
+) => Promise<grpc.StatusObject> | grpc.StatusObject;
 
 /**
  * Chain init options.
@@ -243,16 +247,19 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
   return (core: grpc.ServerUnaryCall<T, V>, callback: grpc.sendUnaryData<V>) => {
     const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
-    let error = false;
+    evts.setMaxListeners(0);
 
     const call: ChainServerUnaryCall<T, V> = {
       core,
       callback,
       ctx,
       req: core.request,
+      cancelled: false,
 
-      sendUnaryErr: async (err: grpc.ServiceError) => {
-        error = true;
+      sendUnaryErr: async (err: grpc.StatusObject) => {
+        if (call.err || call.cancelled) {
+          return;
+        }
         const errorHandler = chainOpts.errorHandler;
         if (errorHandler) {
           call.err = await errorHandler(err, call as never);
@@ -264,21 +271,27 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
-        if (!error) {
-          callback(null, payload, trailer, flags);
-          evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
+        if (call.err || call.cancelled) {
+          return;
         }
+        callback(null, payload, trailer, flags);
+        evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
       },
 
       onUnaryResponseSent: (
-        cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
+        cb: (err?: grpc.StatusObject | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
       ) => {
         evts.once(EVT_UNARY_DATA_SENT, cb);
       },
+
+      onCancelled: (cb: () => void) => {
+        evts.once(EVT_UNARY_CALL_CANCELLED, cb);
+      },
     };
 
-    evts.once(EVT_UNARY_DATA_SENT, () => {
-      evts.removeAllListeners();
+    core.once('cancelled', () => {
+      call.cancelled = true;
+      evts.emit(EVT_UNARY_CALL_CANCELLED);
     });
 
     executeHandlers(call as never, 0, handlers);
@@ -293,17 +306,20 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
   return (core: grpc.ServerReadableStream<T, V>, callback: grpc.sendUnaryData<V>) => {
     const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
+    evts.setMaxListeners(0);
     const tun = new Tunnel<T>();
-    let error = false;
 
     const call: ChainServerReadableStream<T, V> = {
       core,
       callback,
       ctx,
       _inTunnel: tun,
+      cancelled: false,
 
-      sendUnaryErr: async (err: grpc.ServiceError) => {
-        error = true;
+      sendUnaryErr: async (err: grpc.StatusObject) => {
+        if (call.err || call.cancelled) {
+          return;
+        }
         const errorHandler = chainOpts.errorHandler;
         if (errorHandler) {
           call.err = await errorHandler(err, call as never);
@@ -315,11 +331,12 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
-        if (!error) {
-          callback(null, payload, trailer, flags);
-          evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
-          evts.emit(EVT_IN_STREAM_ENDED);
+        if (call.err || call.cancelled) {
+          return;
         }
+        callback(null, payload, trailer, flags);
+        evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
+        evts.emit(EVT_IN_STREAM_ENDED);
       },
 
       onMsgIn: (gate: TunnelGate<T>) => {
@@ -327,7 +344,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       },
 
       onUnaryResponseSent: (
-        cb: (err?: grpc.ServiceError | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
+        cb: (err?: grpc.StatusObject | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
       ) => {
         evts.once(EVT_UNARY_DATA_SENT, cb);
       },
@@ -337,23 +354,17 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       },
     };
 
-    let inStreamEnded = false;
-    let unaryDataSent = false;
-
-    evts.once(EVT_IN_STREAM_ENDED, () => {
-      inStreamEnded = true;
-      if (unaryDataSent) {
-        evts.removeAllListeners();
-      }
-    });
-    evts.once(EVT_UNARY_DATA_SENT, () => {
-      unaryDataSent = true;
-      if (inStreamEnded) {
-        evts.removeAllListeners();
-      }
+    core.once('end', () => {
+      evts.emit(EVT_IN_STREAM_ENDED);
     });
 
-    core.on('end', () => {
+    core.once('error', (err) => {
+      call.err = err;
+      evts.emit(EVT_IN_STREAM_ENDED);
+    });
+
+    core.once('cancelled', () => {
+      call.cancelled = true;
       evts.emit(EVT_IN_STREAM_ENDED);
     });
 
@@ -373,20 +384,20 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
   return (core: grpc.ServerWritableStream<T, V>) => {
     const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
+    evts.setMaxListeners(0);
     const tun = new Tunnel<V>();
-    let error = false;
 
     const call: ChainServerWritableStream<T, V> = {
       core,
       ctx,
       req: core.request,
       _outTunnel: tun,
+      cancelled: false,
 
       sendMsg: (payload: V, cb?: () => void) => {
-        if (error) {
+        if (call.err || call.cancelled) {
           return;
         }
-
         tun.passPayload(payload, 0, () => {
           core.write(payload, () => {
             if (cb) {
@@ -397,19 +408,25 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         });
       },
 
-      sendErr: async (err: grpc.ServiceError) => {
-        error = true;
+      sendErr: async (err: grpc.StatusObject) => {
+        if (call.err || call.cancelled) {
+          return;
+        }
         const errorHandler = chainOpts.errorHandler;
         if (errorHandler) {
           call.err = await errorHandler(err, call as never);
         } else {
           call.err = err;
         }
-        core.once('error', () => {
-          core.end();
-          evts.emit(EVT_OUT_STREAM_ENDED);
-        });
         core.emit('error', call.err);
+      },
+
+      endOutStream: () => {
+        if (call.err || call.cancelled) {
+          return;
+        }
+        core.end();
+        evts.emit(EVT_OUT_STREAM_ENDED);
       },
 
       onMsgOut: (gate: TunnelGate<V>) => {
@@ -420,18 +437,24 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         evts.on(EVT_STREAM_MSG_WRITTEN, cb);
       },
 
-      endOutStream: () => {
-        core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
-      },
-
       onOutStreamEnded: (cb: () => void) => {
         evts.once(EVT_OUT_STREAM_ENDED, cb);
       },
+
+      onCancelled: (cb: () => void) => {
+        evts.once(EVT_UNARY_CALL_CANCELLED, cb);
+      },
     };
 
-    evts.once(EVT_OUT_STREAM_ENDED, () => {
-      evts.removeAllListeners();
+    core.once('error', (err) => {
+      call.err = err;
+      core.end();
+      evts.emit(EVT_OUT_STREAM_ENDED);
+    });
+
+    core.once('cancelled', () => {
+      call.cancelled = true;
+      evts.emit(EVT_UNARY_CALL_CANCELLED);
     });
 
     executeHandlers(call as never, 0, handlers);
@@ -446,15 +469,16 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
   return (core: grpc.ServerDuplexStream<T, V>) => {
     const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
+    evts.setMaxListeners(0);
     const tunIn = new Tunnel<T>();
     const tunOut = new Tunnel<V>();
-    let error = false;
 
     const call: ChainServerDuplexStream<T, V> = {
       core,
       ctx,
       _inTunnel: tunIn,
       _outTunnel: tunOut,
+      cancelled: false,
 
       onMsgIn: (gate: TunnelGate<T>) => {
         tunIn.addGate(gate);
@@ -465,10 +489,9 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       },
 
       sendMsg: (payload: V, cb?: () => void) => {
-        if (error) {
+        if (call.err || call.cancelled) {
           return;
         }
-
         tunOut.passPayload(payload, 0, () => {
           core.write(payload, () => {
             if (cb) {
@@ -479,19 +502,16 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         });
       },
 
-      sendErr: async (err: grpc.ServiceError) => {
-        error = true;
+      sendErr: async (err: grpc.StatusObject) => {
+        if (call.err || call.cancelled) {
+          return;
+        }
         const errorHandler = chainOpts.errorHandler;
         if (errorHandler) {
           call.err = await errorHandler(err, call as never);
         } else {
           call.err = err;
         }
-        core.once('error', () => {
-          core.end();
-          evts.emit(EVT_OUT_STREAM_ENDED);
-          evts.emit(EVT_IN_STREAM_ENDED);
-        });
         core.emit('error', call.err);
       },
 
@@ -504,11 +524,14 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       },
 
       endOutStream: () => {
+        if (call.err || call.cancelled) {
+          return;
+        }
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
       },
 
-      onOutStreamEnded: (cb: (err?: grpc.ServiceError | null) => void) => {
+      onOutStreamEnded: (cb: (err?: grpc.StatusObject | null) => void) => {
         evts.once(EVT_OUT_STREAM_ENDED, cb);
       },
     };
@@ -529,8 +552,22 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       }
     });
 
-    core.on('end', () => {
+    core.once('end', () => {
       evts.emit(EVT_IN_STREAM_ENDED);
+    });
+
+    core.once('error', (err) => {
+      call.err = err;
+      core.end();
+      evts.emit(EVT_OUT_STREAM_ENDED);
+      evts.emit(EVT_IN_STREAM_ENDED);
+    });
+
+    core.once('cancelled', () => {
+      call.cancelled = true;
+      core.end();
+      evts.emit(EVT_IN_STREAM_ENDED);
+      evts.emit(EVT_OUT_STREAM_ENDED);
     });
 
     executeHandlers(call as never, 0, handlers, () => {
