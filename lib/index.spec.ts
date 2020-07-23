@@ -1,15 +1,81 @@
+import 'mocha';
 import * as lib from '.';
 import * as grpc from '@grpc/grpc-js';
 import { TestServiceClient, TestServiceService as TestService, ITestServiceServer } from './proto/test_grpc_pb';
 import { TestMessage } from './proto/test_pb';
 import { expect } from 'chai';
-import 'mocha';
+import * as net from 'net';
 
-async function createTestServer(impl: ITestServiceServer): Promise<grpc.Server> {
+class TestProxy {
+  private sockets: net.Socket[] = [];
+
+  constructor(private server: net.Server) {}
+
+  public listen() {
+    this.server.on('connection', (socket) => this.sockets.push(socket));
+    this.server.listen(3840, '0.0.0.0');
+  }
+
+  public close() {
+    if (this.server.listening) {
+      this.server.close();
+    }
+    this.sockets.forEach((s) => {
+      s.end();
+    });
+  }
+}
+
+function createProxy(): TestProxy {
+  return new TestProxy(
+    net.createServer((localSocket) => {
+      const remoteSocket = new net.Socket();
+      remoteSocket.connect({ host: '0.0.0.0', port: 3841 });
+
+      localSocket.on('data', (data) => {
+        if (remoteSocket.destroyed) {
+          return;
+        }
+        const flushed = remoteSocket.write(data);
+        if (!flushed) {
+          localSocket.pause();
+        }
+      });
+
+      remoteSocket.on('data', (data) => {
+        if (localSocket.destroyed) {
+          return;
+        }
+        const flushed = localSocket.write(data);
+        if (!flushed) {
+          remoteSocket.pause();
+        }
+      });
+
+      localSocket.on('drain', () => {
+        remoteSocket.resume();
+      });
+
+      remoteSocket.on('drain', () => {
+        localSocket.resume();
+      });
+
+      localSocket.on('close', () => {
+        remoteSocket.end();
+      });
+
+      remoteSocket.on('close', () => {
+        localSocket.end();
+      });
+    }),
+  );
+}
+
+async function createTestServer(impl: ITestServiceServer, behindProxy = false): Promise<grpc.Server> {
   return new Promise<grpc.Server>((resolve, reject) => {
     const server = new grpc.Server();
     server.addService(TestService, impl as never);
-    server.bindAsync('0.0.0.0:3840', grpc.ServerCredentials.createInsecure(), (err) => {
+    server.bindAsync(`0.0.0.0:${behindProxy ? 3841 : 3840}`, grpc.ServerCredentials.createInsecure(), (err) => {
       if (err) {
         return reject(err);
       }
@@ -596,7 +662,7 @@ describe('Client Streaming Calls', () => {
     try {
       const chain = lib.initChain();
       let onStreamEndCbCount = 0;
-      let streamEndError: Error | grpc.StatusObject | null = null;
+      let callErr: Error | grpc.StatusObject | null = null;
 
       server = await createTestServer({
         rpcTest: chain(TestService.rpcTest, () => 0),
@@ -605,8 +671,10 @@ describe('Client Streaming Calls', () => {
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
             call.onInStreamEnded(() => {
               onStreamEndCbCount++;
-              streamEndError = call.err;
+              callErr = call.err;
             });
+            // Simulate an internal failure by emitting directly on the stream
+            call.core.emit('error', new Error('Some internal streaming error'));
           },
         ),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -615,18 +683,18 @@ describe('Client Streaming Calls', () => {
 
       server.start();
 
-      await new Promise<TestMessage>((resolve, reject) => {
-        const stream = createTestClient().clientStreamTest((err, res) => {
-          if (err) {
-            return reject(err);
+      const error = await new Promise<Error>((resolve, reject) => {
+        createTestClient().clientStreamTest((err) => {
+          if (!err) {
+            return reject(new Error('Expected an error'));
           }
-          resolve(res);
+          resolve(err);
         });
-        setTimeout(() => stream.cancel(), 100);
       });
 
+      expect(error.message).to.equal('2 UNKNOWN: Some internal streaming error');
+      expect((callErr as Error).message).to.equal('Some internal streaming error');
       expect(onStreamEndCbCount).to.equal(1);
-      console.log(streamEndError);
     } catch (err) {
       expect.fail(err);
     } finally {
