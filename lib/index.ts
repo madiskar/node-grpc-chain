@@ -23,9 +23,19 @@ export interface Context {
   locals: { [key: string]: unknown };
 }
 
-export type NextGateFunction = () => void;
+/**
+ * Sends a signal to the Chain that the handler is ready to accept
+ * inbound stream data (if the particular call has a request stream) and/or
+ * continue to the next call handler (if there is one).
+ *
+ * In the case of Tunnels, DoneFunction serves a similar purpose, in
+ * that it instructs the Tunnel to either continue to the next Gate or
+ * consider the payload as `ready for transport` (in the case of outgoing
+ * tunnels).
+ */
+export type DoneFunction = () => void;
 
-export type TunnelGate<T extends jspb.Message> = (payload: T, next: NextGateFunction) => void;
+export type TunnelGate<T extends jspb.Message> = (payload: T, tdone: DoneFunction) => void;
 
 export class Tunnel<T extends jspb.Message> {
   private gates: TunnelGate<T>[] = [];
@@ -38,11 +48,9 @@ export class Tunnel<T extends jspb.Message> {
     if (this.gates.length === 0 && cb) {
       cb();
     }
-
     if (index >= this.gates.length) {
       return;
     }
-
     this.gates[index](payload, () => {
       if (index === this.gates.length - 1 && cb) {
         cb();
@@ -146,7 +154,7 @@ export type GenericServiceCall =
  */
 export type UnaryCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerUnaryCall<T, V>,
-  ready: ReadyFunction,
+  done: DoneFunction,
 ) => void;
 
 /**
@@ -154,7 +162,7 @@ export type UnaryCallHandler<T extends jspb.Message, V extends jspb.Message> = (
  */
 export type ClientStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerReadableStream<T, V>,
-  ready: ReadyFunction,
+  done: DoneFunction,
 ) => void;
 
 /**
@@ -162,7 +170,7 @@ export type ClientStreamingCallHandler<T extends jspb.Message, V extends jspb.Me
  */
 export type ServerStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerWritableStream<T, V>,
-  ready: ReadyFunction,
+  done: DoneFunction,
 ) => void;
 
 /**
@@ -170,10 +178,10 @@ export type ServerStreamingCallHandler<T extends jspb.Message, V extends jspb.Me
  */
 export type BidiStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerDuplexStream<T, V>,
-  ready: ReadyFunction,
+  done: DoneFunction,
 ) => void;
 
-export type GenericCallHandler = (call: GenericServiceCall, ready: ReadyFunction) => void;
+export type GenericCallHandler = (call: GenericServiceCall, done: DoneFunction) => void;
 
 export type ChainCallHandler<T extends jspb.Message, V extends jspb.Message> =
   | BidiStreamingCallHandler<T, V>
@@ -181,13 +189,6 @@ export type ChainCallHandler<T extends jspb.Message, V extends jspb.Message> =
   | ClientStreamingCallHandler<T, V>
   | UnaryCallHandler<T, V>
   | GenericCallHandler;
-
-/**
- * Sends a signal to the Chain that the handler is ready to accept
- * inbound stream data (if the particular call has a request stream) and/or
- * continue to the next call handler (if there is one).
- */
-export type ReadyFunction = () => void;
 
 /**
  * Custom error handler.
