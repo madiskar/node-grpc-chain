@@ -44,35 +44,25 @@ export class Tunnel<T extends jspb.Message> {
     this.gates.push(gate);
   }
 
-  public passPayload(payload: T, index = 0, cb?: () => void): void {
-    if (this.gates.length === 0 && cb) {
-      cb();
-    }
+  public passPayload(payload: T, index = 0): void {
     if (index >= this.gates.length) {
       return;
     }
-    this.gates[index](payload, () => {
-      if (index === this.gates.length - 1 && cb) {
-        cb();
-      }
-      this.passPayload(payload, index + 1, cb);
-    });
+    this.gates[index](payload, () => this.passPayload(payload, index + 1));
   }
 }
 
 export interface InboundTunneledStream<T extends jspb.Message> {
-  _inTunnel: Tunnel<T>;
+  _tun: Tunnel<T>;
   inStreamEnded: boolean;
   onMsgIn: (gate: TunnelGate<T>) => void;
   onInStreamEnded: (cb: () => void) => void;
 }
 
 export interface OutboundTunneledStream<V extends jspb.Message> {
-  _outTunnel: Tunnel<V>;
   outStreamEnded: boolean;
   sendMsg: (payload: V, cb?: () => void) => void;
   sendErr: (err: grpc.StatusObject) => void;
-  onMsgOut: (gate: TunnelGate<V>) => void;
   onMsgWritten: (cb: (payload: V) => void) => void;
   endOutStream: () => void;
   onOutStreamEnded: (cb: () => void) => void;
@@ -326,7 +316,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       core,
       callback,
       ctx,
-      _inTunnel: tun,
+      _tun: tun,
       cancelled: false,
       errOccurred: false,
       unaryDataSent: false,
@@ -425,7 +415,6 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
   return (core: grpc.ServerWritableStream<T, V>) => {
     const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
-    const tun = new Tunnel<V>();
 
     evts.setMaxListeners(0);
 
@@ -433,7 +422,6 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
       core,
       ctx,
       req: core.request,
-      _outTunnel: tun,
       cancelled: false,
       errOccurred: false,
       outStreamEnded: false,
@@ -442,13 +430,11 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         if (call.errOccurred || call.cancelled || call.outStreamEnded) {
           return;
         }
-        tun.passPayload(payload, 0, () => {
-          core.write(payload, () => {
-            if (cb) {
-              cb();
-            }
-            evts.emit(EVT_STREAM_MSG_WRITTEN, payload);
-          });
+        core.write(payload, () => {
+          if (cb) {
+            cb();
+          }
+          evts.emit(EVT_STREAM_MSG_WRITTEN, payload);
         });
       },
 
@@ -473,10 +459,6 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         call.outStreamEnded = true;
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
-      },
-
-      onMsgOut: (gate: TunnelGate<V>) => {
-        tun.addGate(gate);
       },
 
       onMsgWritten: (cb: (payload: V) => void) => {
@@ -527,23 +509,21 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
   return (core: grpc.ServerDuplexStream<T, V>) => {
     const ctx: Context = { method, locals: {} };
     const evts = new EventEmitter();
-    const tunIn = new Tunnel<T>();
-    const tunOut = new Tunnel<V>();
+    const tun = new Tunnel<T>();
 
     evts.setMaxListeners(0);
 
     const call: ChainServerDuplexStream<T, V> = {
       core,
       ctx,
-      _inTunnel: tunIn,
-      _outTunnel: tunOut,
+      _tun: tun,
       cancelled: false,
       errOccurred: false,
       outStreamEnded: false,
       inStreamEnded: false,
 
       onMsgIn: (gate: TunnelGate<T>) => {
-        tunIn.addGate(gate);
+        tun.addGate(gate);
       },
 
       onInStreamEnded: (cb: () => void) => {
@@ -554,13 +534,11 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         if (call.errOccurred || call.cancelled || call.outStreamEnded) {
           return;
         }
-        tunOut.passPayload(payload, 0, () => {
-          core.write(payload, () => {
-            if (cb) {
-              cb();
-            }
-            evts.emit(EVT_STREAM_MSG_WRITTEN, payload);
-          });
+        core.write(payload, () => {
+          if (cb) {
+            cb();
+          }
+          evts.emit(EVT_STREAM_MSG_WRITTEN, payload);
         });
       },
 
@@ -576,10 +554,6 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
           call.err = err;
         }
         core.emit('error', call.err);
-      },
-
-      onMsgOut: (gate: TunnelGate<V>) => {
-        tunOut.addGate(gate);
       },
 
       onMsgWritten: (cb: (payload: V) => void) => {
@@ -644,7 +618,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
 
     executeHandlers(call as never, 0, handlers, () => {
       core.on('data', (payload: T) => {
-        tunIn.passPayload(payload);
+        tun.passPayload(payload);
       });
     });
   };
