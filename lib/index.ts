@@ -69,7 +69,7 @@ export interface OutboundTunneledStream<V extends jspb.Message> {
 }
 
 export interface UnaryRespondable<V extends jspb.Message> {
-  unaryDataSent: boolean;
+  unaryResponseSent: boolean;
   sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => void;
   sendUnaryErr: (err: grpc.StatusObject) => void;
   onUnaryResponseSent: (
@@ -250,11 +250,11 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
       ctx,
       req: core.request,
       cancelled: false,
-      unaryDataSent: false,
+      unaryResponseSent: false,
       errOccurred: false,
 
       sendUnaryErr: async (err: grpc.StatusObject) => {
-        if (call.unaryDataSent || call.errOccurred || call.cancelled) {
+        if (call.unaryResponseSent || call.errOccurred || call.cancelled) {
           return;
         }
         call.errOccurred = true;
@@ -264,15 +264,16 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
         } else {
           call.err = err;
         }
+        call.unaryResponseSent = true;
         callback(call.err, null);
         evts.emit(EVT_UNARY_DATA_SENT, call.err);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
-        if (call.unaryDataSent || call.errOccurred || call.cancelled) {
+        if (call.unaryResponseSent || call.errOccurred || call.cancelled) {
           return;
         }
-        call.unaryDataSent = true;
+        call.unaryResponseSent = true;
         callback(null, payload, trailer, flags);
         evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
       },
@@ -289,7 +290,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
     };
 
     core.once('cancelled', () => {
-      if (call.unaryDataSent || call.errOccurred) {
+      if (call.unaryResponseSent || call.errOccurred) {
         return;
       }
       call.cancelled = true;
@@ -319,11 +320,11 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       _tun: tun,
       cancelled: false,
       errOccurred: false,
-      unaryDataSent: false,
+      unaryResponseSent: false,
       inStreamEnded: false,
 
       sendUnaryErr: async (err: grpc.StatusObject) => {
-        if (call.unaryDataSent || call.errOccurred || call.cancelled) {
+        if (call.unaryResponseSent || call.errOccurred || call.cancelled) {
           return;
         }
         call.errOccurred = true;
@@ -337,16 +338,16 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
           call.inStreamEnded = true;
           evts.emit(EVT_IN_STREAM_ENDED);
         }
-        call.unaryDataSent = true;
+        call.unaryResponseSent = true;
         callback(call.err, null);
         evts.emit(EVT_UNARY_DATA_SENT, call.err);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
-        if (call.unaryDataSent || call.errOccurred || call.cancelled) {
+        if (call.unaryResponseSent || call.errOccurred || call.cancelled) {
           return;
         }
-        call.unaryDataSent = true;
+        call.unaryResponseSent = true;
         callback(null, payload, trailer, flags);
         evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
         if (!call.inStreamEnded) {
@@ -389,7 +390,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
     });
 
     core.once('cancelled', () => {
-      if (call.unaryDataSent || call.errOccurred || call.cancelled) {
+      if (call.unaryResponseSent || call.errOccurred || call.cancelled) {
         return;
       }
       call.cancelled = true;

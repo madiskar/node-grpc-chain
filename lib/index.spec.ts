@@ -113,108 +113,19 @@ describe('Unary Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
+      const callCounts = {
+        onUnaryResponseSent: 0,
+      };
+      let _call: lib.ChainServerUnaryCall<TestMessage, TestMessage> | null = null;
+
       const chain = lib.initChain();
 
       server = await createTestServer({
         rpcTest: chain(
           TestService.rpcTest,
           (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
-            const resp = new TestMessage();
-            resp.setText('Hello Test!');
-            call.sendUnaryData(resp);
-            done();
-          },
-        ),
-        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
-        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
-        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
-      });
-
-      server.start();
-
-      const result = await new Promise<TestMessage>((resolve, reject) => {
-        createTestClient().rpcTest(new TestMessage(), (err, res) => {
-          if (err) {
-            return reject(new Error(`Server responded with an unexpected error: ${JSON.stringify(err)}`));
-          }
-          resolve(res);
-        });
-      });
-
-      expect(result.getText()).to.equal('Hello Test!');
-    } catch (err) {
-      expect.fail(err);
-    } finally {
-      if (server) {
-        server.forceShutdown();
-      }
-    }
-  });
-
-  it('Should respond with an error', async () => {
-    let server: grpc.Server | null = null;
-
-    try {
-      const chain = lib.initChain();
-
-      server = await createTestServer({
-        rpcTest: chain(
-          TestService.rpcTest,
-          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
-            call.sendUnaryErr({
-              code: grpc.status.UNAUTHENTICATED,
-              metadata: new grpc.Metadata(),
-              details: 'Invalid token',
-            });
-            done();
-          },
-        ),
-        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
-        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
-        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
-      });
-
-      server.start();
-
-      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
-        createTestClient().rpcTest(new TestMessage(), (err) => {
-          if (!err) {
-            return reject(new Error('Expected an error'));
-          }
-          resolve(err);
-        });
-      });
-
-      expect(err.code).to.equal(grpc.status.UNAUTHENTICATED);
-      expect(err.details).to.equal('Invalid token');
-    } catch (err) {
-      expect.fail(err);
-    } finally {
-      if (server) {
-        server.forceShutdown();
-      }
-    }
-  });
-
-  it('Should execute onUnaryResponseSent callback', async () => {
-    let server: grpc.Server | null = null;
-
-    try {
-      const chain = lib.initChain();
-      let cbPayload: TestMessage | null = null;
-      let cbCount = 0;
-
-      server = await createTestServer({
-        rpcTest: chain(
-          TestService.rpcTest,
-          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
-            call.onUnaryResponseSent((err, payload) => {
-              cbPayload = payload;
-              cbCount++;
-            });
-            done();
-          },
-          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             const resp = new TestMessage();
             resp.setText('Hello Test!');
             call.sendUnaryData(resp);
@@ -233,15 +144,23 @@ describe('Unary Calls', () => {
       const payload = await new Promise<TestMessage>((resolve, reject) => {
         createTestClient().rpcTest(new TestMessage(), (err, res) => {
           if (err) {
-            return reject(err);
+            return reject(new Error(`Server responded with an unexpected error: ${JSON.stringify(err)}`));
           }
           resolve(res);
         });
       });
 
-      expect(cbCount).to.equal(1);
-      expect(cbPayload).to.not.be.null;
-      expect(cbPayload.getText()).to.equal(payload.getText()).to.equal('Hello Test!');
+      expect(callCounts).to.include({
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: false,
+          cancelled: false,
+          unaryResponseSent: true,
+        })
+        .but.not.have.keys('err');
+      expect(payload.getText()).to.equal('Hello Test!');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -251,25 +170,23 @@ describe('Unary Calls', () => {
     }
   });
 
-  it('Should execute custom error handler', async () => {
+  it('Should respond with an error', async () => {
     let server: grpc.Server | null = null;
 
     try {
-      let handlerErr: grpc.ServiceError | null = null;
-      let handlerCallCount = 0;
+      const callCounts = {
+        onUnaryResponseSent: 0,
+      };
+      let _call: lib.ChainServerUnaryCall<TestMessage, TestMessage> | null = null;
 
-      const chain = lib.initChain({
-        errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
-          handlerErr = err;
-          handlerCallCount++;
-          return err;
-        },
-      });
+      const chain = lib.initChain();
 
       server = await createTestServer({
         rpcTest: chain(
           TestService.rpcTest,
           (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
@@ -281,8 +198,6 @@ describe('Unary Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            // The third send should do nothing
-            call.sendUnaryData(new TestMessage());
             done();
           },
         ),
@@ -293,7 +208,7 @@ describe('Unary Calls', () => {
 
       server.start();
 
-      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
         createTestClient().rpcTest(new TestMessage(), (err) => {
           if (!err) {
             return reject(new Error('Expected an error'));
@@ -302,10 +217,100 @@ describe('Unary Calls', () => {
         });
       });
 
-      expect(handlerCallCount).to.equal(1);
-      expect(handlerErr).to.not.be.null;
-      expect(err.code).to.equal(handlerErr.code).to.equal(grpc.status.UNAUTHENTICATED);
-      expect(err.details).to.equal(handlerErr.details).to.equal('Invalid token');
+      expect(callCounts).to.include({
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          unaryResponseSent: true,
+        })
+        .and.have.keys('err');
+      expect(error.code)
+        .to.equal((_call.err as grpc.ServiceError).code)
+        .to.equal(grpc.status.UNAUTHENTICATED);
+      expect(error.details)
+        .to.equal((_call.err as grpc.ServiceError).details)
+        .to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should respond with an error and execute error handler', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        errorHandler: 0,
+        onUnaryResponseSent: 0,
+      };
+      let _call: lib.ChainServerUnaryCall<TestMessage, TestMessage> | null = null;
+      let handlerError: grpc.ServiceError | null = null;
+
+      const chain = lib.initChain({
+        errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
+          handlerError = err;
+          callCounts.errorHandler++;
+          return err;
+        },
+      });
+
+      server = await createTestServer({
+        rpcTest: chain(
+          TestService.rpcTest,
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
+            call.sendUnaryErr({
+              code: grpc.status.UNAUTHENTICATED,
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+            done();
+          },
+        ),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        createTestClient().rpcTest(new TestMessage(), (err) => {
+          if (!err) {
+            return reject(new Error('Expected an error'));
+          }
+          resolve(err);
+        });
+      });
+
+      expect(callCounts).to.include({
+        errorHandler: 1,
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          unaryResponseSent: true,
+        })
+        .and.have.keys('err');
+      expect(handlerError).to.not.be.null;
+      expect(error.code)
+        .to.equal(handlerError.code)
+        .to.equal((_call.err as grpc.ServiceError).code)
+        .to.equal(grpc.status.UNAUTHENTICATED);
+      expect(error.details)
+        .to.equal(handlerError.details)
+        .to.equal((_call.err as grpc.ServiceError).details)
+        .to.equal('Invalid token');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -319,13 +324,19 @@ describe('Unary Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
-      let cbCount = 0;
+      const callCounts = {
+        onUnaryCallCancelled: 0,
+        onUnaryResponseSent: 0,
+      };
+      let _call: lib.ChainServerUnaryCall<TestMessage, TestMessage> | null = null;
 
       const chain = lib.initChain();
 
       server = await createTestServer({
         rpcTest: chain(TestService.rpcTest, (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>) => {
-          call.onUnaryCallCancelled(() => cbCount++);
+          _call = call;
+          call.onUnaryCallCancelled(() => callCounts.onUnaryCallCancelled++);
+          call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
         }),
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -341,20 +352,23 @@ describe('Unary Calls', () => {
           }
           resolve(err);
         });
-        setTimeout(() => {
-          call.cancel();
-        }, 100);
+        setTimeout(() => call.cancel(), 100);
       });
 
-      expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
-
-      // Allow 100 ms of grace time for the onUnaryCallCancelled callback to fire (usually executes after
-      // the error is thrown on client side).
+      // Provide some grace time for all the callbacks to fire
       await new Promise((resolve) => {
         setTimeout(() => resolve(), 100);
       });
 
-      expect(cbCount).to.equal(1);
+      expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
+      expect(callCounts).to.include({ onUnaryCallCancelled: 1, onUnaryResponseSent: 0 });
+      expect(_call)
+        .to.include({
+          cancelled: true,
+          errOccurred: false,
+          unaryResponseSent: false,
+        })
+        .but.not.have.keys('err');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -370,16 +384,25 @@ describe('Client Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
+      const callCounts = {
+        onInStreamEnded: 0,
+        onUnaryResponseSent: 0,
+      };
+      const payloadsFromClient: TestMessage[] = [];
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+
       const chain = lib.initChain();
-      const incomingPayloads: TestMessage[] = [];
 
       server = await createTestServer({
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.onMsgIn((payload: TestMessage, tdone: lib.DoneFunction) => {
-              incomingPayloads.push(payload);
+              payloadsFromClient.push(payload);
               tdone();
             });
             call.onInStreamEnded(() => {
@@ -407,18 +430,30 @@ describe('Client Streaming Calls', () => {
         });
 
         const payload = new TestMessage();
-        payload.setText('Incoming_0');
+        payload.setText('FromClient_0');
         stream.write(payload);
 
-        payload.setText('Incoming_1');
+        payload.setText('FromClient_1');
         stream.write(payload);
 
         stream.end();
       });
 
-      expect(incomingPayloads).to.have.length(2);
-      expect(incomingPayloads[0].getText()).to.equal('Incoming_0');
-      expect(incomingPayloads[1].getText()).to.equal('Incoming_1');
+      expect(callCounts).to.include({
+        onInStreamEnded: 1,
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: false,
+          cancelled: false,
+          inStreamEnded: true,
+          unaryResponseSent: true,
+        })
+        .but.not.have.keys('err');
+      expect(payloadsFromClient).to.have.length(2);
+      expect(payloadsFromClient[0].getText()).to.equal('FromClient_0');
+      expect(payloadsFromClient[1].getText()).to.equal('FromClient_1');
       expect(payload.getText()).to.equal('Hello Test!');
     } catch (err) {
       expect.fail(err);
@@ -433,6 +468,12 @@ describe('Client Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
+      const callCounts = {
+        onInStreamEnded: 0,
+        onUnaryResponseSent: 0,
+      };
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+
       const chain = lib.initChain();
 
       server = await createTestServer({
@@ -440,12 +481,14 @@ describe('Client Streaming Calls', () => {
         clientStreamTest: chain(
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-
             // Second send should do nothing
             call.sendUnaryErr({
               code: grpc.status.UNAUTHENTICATED,
@@ -461,23 +504,33 @@ describe('Client Streaming Calls', () => {
 
       server.start();
 
-      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
-        const stream = createTestClient().clientStreamTest((err) => {
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        createTestClient().clientStreamTest((err) => {
           if (!err) {
             return reject(new Error('Expected an error'));
           }
           resolve(err);
         });
-        setTimeout(() => {
-          if (stream.writable) {
-            stream.end();
-            reject(new Error('Expected an error'));
-          }
-        }, 500);
       });
 
-      expect(err.code).to.equal(grpc.status.UNAUTHENTICATED);
-      expect(err.details).to.equal('Invalid token');
+      expect(callCounts).to.include({
+        onInStreamEnded: 1,
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          inStreamEnded: true,
+          unaryResponseSent: true,
+        })
+        .and.have.keys('err');
+      expect(error.code)
+        .to.equal((_call.err as grpc.ServiceError).code)
+        .to.equal(grpc.status.UNAUTHENTICATED);
+      expect(error.details)
+        .to.equal((_call.err as grpc.ServiceError).details)
+        .to.equal('Invalid token');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -487,17 +540,22 @@ describe('Client Streaming Calls', () => {
     }
   });
 
-  it('Should respond with an error and execute custom error handler', async () => {
+  it('Should respond with an error and execute error handler', async () => {
     let server: grpc.Server | null = null;
 
     try {
-      let customHandlerErr: grpc.ServiceError | null = null;
-      let custonHandlerCallCount = 0;
+      const callCounts = {
+        errorHandler: 0,
+        onInStreamEnded: 0,
+        onUnaryResponseSent: 0,
+      };
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+      let handlerError: grpc.ServiceError | null = null;
 
       const chain = lib.initChain({
         errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
-          customHandlerErr = err;
-          custonHandlerCallCount++;
+          handlerError = err;
+          callCounts.errorHandler++;
           return err;
         },
       });
@@ -507,6 +565,9 @@ describe('Client Streaming Calls', () => {
         clientStreamTest: chain(
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
@@ -521,25 +582,37 @@ describe('Client Streaming Calls', () => {
 
       server.start();
 
-      const err = await new Promise<grpc.ServiceError>((resolve, reject) => {
-        const stream = createTestClient().clientStreamTest((err) => {
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        createTestClient().clientStreamTest((err) => {
           if (!err) {
             return reject(new Error('Expected an error'));
           }
           resolve(err);
         });
-        setTimeout(() => {
-          if (stream.writable) {
-            stream.end();
-            reject(new Error('Expected an error'));
-          }
-        }, 500);
       });
 
-      expect(customHandlerErr).to.not.be.null;
-      expect(custonHandlerCallCount).to.equal(1);
-      expect(err.code).to.equal(customHandlerErr.code).to.equal(grpc.status.UNAUTHENTICATED);
-      expect(err.details).to.equal(customHandlerErr.details).to.equal('Invalid token');
+      expect(callCounts).to.include({
+        errorHandler: 1,
+        onInStreamEnded: 1,
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          inStreamEnded: true,
+          unaryResponseSent: true,
+        })
+        .and.have.keys('err');
+      expect(handlerError).to.not.be.null;
+      expect(error.code)
+        .to.equal(handlerError.code)
+        .to.equal((_call.err as grpc.ServiceError).code)
+        .to.equal(grpc.status.UNAUTHENTICATED);
+      expect(error.details)
+        .to.equal(handlerError.details)
+        .to.equal((_call.err as grpc.ServiceError).details)
+        .to.equal('Invalid token');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -549,80 +622,35 @@ describe('Client Streaming Calls', () => {
     }
   });
 
-  it('Should execute onUnaryResponseSent callback', async () => {
+  it('Should not execute second handler', async () => {
     let server: grpc.Server | null = null;
 
     try {
+      const callCounts = {
+        onUnaryResponseSent: 0,
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+      let handler1 = false;
+      let handler2 = false;
+
       const chain = lib.initChain();
-      let cbPayload: TestMessage | null = null;
-
-      server = await createTestServer({
-        rpcTest: chain(TestService.rpcTest, () => 0),
-        clientStreamTest: chain(
-          TestService.clientStreamTest,
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
-            call.onUnaryResponseSent((err, payload) => {
-              cbPayload = payload;
-            });
-            done();
-          },
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
-            const resp = new TestMessage();
-            resp.setText('Hello Test!');
-            call.sendUnaryData(resp);
-            done();
-          },
-        ),
-        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
-        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
-      });
-
-      server.start();
-
-      const payload = await new Promise<TestMessage>((resolve, reject) => {
-        const stream = createTestClient().clientStreamTest((err, res) => {
-          if (err) {
-            return reject(err);
-          }
-          resolve(res);
-        });
-        setTimeout(() => {
-          if (stream.writable) {
-            stream.end();
-            reject(new Error('Expected a payload'));
-          }
-        }, 500);
-      });
-
-      expect(cbPayload).to.not.be.null;
-      expect(cbPayload.getText()).to.equal(payload.getText()).to.equal('Hello Test!');
-    } catch (err) {
-      expect.fail(err);
-    } finally {
-      if (server) {
-        server.forceShutdown();
-      }
-    }
-  });
-
-  it('Should not continue to second handler', async () => {
-    let server: grpc.Server | null = null;
-
-    try {
-      const chain = lib.initChain();
-      let checkpoint1 = false;
-      let checkpoint2 = false;
 
       server = await createTestServer({
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
-            checkpoint1 = true;
+            _call = call;
+            handler1 = true;
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
             call.sendUnaryData(new TestMessage());
           },
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
-            checkpoint2 = true;
+            handler2 = true;
+            call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
             done();
           },
         ),
@@ -641,8 +669,81 @@ describe('Client Streaming Calls', () => {
         });
       });
 
-      expect(checkpoint1).to.be.true;
-      expect(checkpoint2).to.be.false;
+      expect(callCounts).to.include({
+        onInStreamEnded: 1,
+        onUnaryResponseSent: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: false,
+          cancelled: false,
+          inStreamEnded: true,
+          unaryResponseSent: true,
+        })
+        .but.not.have.keys('err');
+      expect(handler1).to.be.true;
+      expect(handler2).to.be.false;
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should cancel', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(
+          TestService.clientStreamTest,
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            done();
+          },
+        ),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
+      });
+
+      server.start();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().clientStreamTest((err) => {
+          if (!err) {
+            return reject(new Error('Expected an error'));
+          }
+          resolve(err);
+        });
+        setTimeout(() => stream.cancel(), 100);
+      });
+
+      // Provide some grace time for all the callbacks to fire
+      await new Promise((resolve) => {
+        setTimeout(() => resolve(), 100);
+      });
+
+      expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
+      expect(callCounts).to.include({ onInStreamEnded: 1 });
+      expect(_call)
+        .to.include({
+          cancelled: true,
+          errOccurred: false,
+          inStreamEnded: true,
+          unaryResponseSent: false,
+        })
+        .but.not.have.keys('err');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -656,19 +757,20 @@ describe('Client Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
+      const callCounts = {
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+
       const chain = lib.initChain();
-      let onInStreamEndedCallCount = 0;
-      let callErr: Error | grpc.StatusObject | null = null;
 
       server = await createTestServer({
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
-            call.onInStreamEnded(() => {
-              onInStreamEndedCallCount++;
-              callErr = call.err;
-            });
+            _call = call;
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
             // Simulate an internal failure by emitting directly on the stream
             call.core.emit('error', new Error('Some internal streaming error'));
           },
@@ -689,8 +791,18 @@ describe('Client Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('2 UNKNOWN: Some internal streaming error');
-      expect((callErr as Error).message).to.equal('Some internal streaming error');
-      expect(onInStreamEndedCallCount).to.equal(1);
+      expect(callCounts).to.include({
+        onInStreamEnded: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          inStreamEnded: true,
+          unaryResponseSent: false,
+        })
+        .and.have.keys('err');
+      expect((_call.err as Error).message).to.equal('Some internal streaming error');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -705,9 +817,12 @@ describe('Client Streaming Calls', () => {
     let proxy: TestProxy | null = null;
 
     try {
+      const callCounts = {
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
+
       const chain = lib.initChain();
-      let onStreamEndCbCount = 0;
-      let callCancelled = false;
 
       server = await createTestServer(
         {
@@ -715,10 +830,8 @@ describe('Client Streaming Calls', () => {
           clientStreamTest: chain(
             TestService.clientStreamTest,
             (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
-              call.onInStreamEnded(() => {
-                onStreamEndCbCount++;
-                callCancelled = call.cancelled;
-              });
+              _call = call;
+              call.onInStreamEnded(() => callCounts.onInStreamEnded++);
             },
           ),
           serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -742,15 +855,21 @@ describe('Client Streaming Calls', () => {
         setTimeout(() => proxy.close(), 100);
       });
 
-      expect(error.message).to.equal('14 UNAVAILABLE: Connection dropped');
-
-      // Allow 100 ms of grace time for the onInStreamEnded callback to fire (usually executes after
-      // the error is thrown on client side, in the case of a network failure for example).
+      // Provide some grace time for all the callbacks to fire
       await new Promise((resolve) => {
         setTimeout(() => resolve(), 100);
       });
-      expect(onStreamEndCbCount).to.equal(1);
-      expect(callCancelled).to.be.true;
+
+      expect(error.message).to.equal('14 UNAVAILABLE: Connection dropped');
+      expect(callCounts).to.include({ onInStreamEnded: 1 });
+      expect(_call)
+        .to.include({
+          cancelled: true,
+          errOccurred: false,
+          inStreamEnded: true,
+          unaryResponseSent: false,
+        })
+        .but.not.have.keys('err');
     } catch (err) {
       expect.fail(err);
     } finally {
@@ -769,13 +888,13 @@ describe('Server Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
-      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
       const callCounts = {
         onMsgWritten: 0,
         sendMsgCb: 0,
         onOutStreamEnded: 0,
       };
       const payloadsFromServer: TestMessage[] = [];
+      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
       const chain = lib.initChain();
 
@@ -847,11 +966,11 @@ describe('Server Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
-      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
       const callCounts = {
         onOutStreamEnded: 0,
       };
       const payloadsFromServer: TestMessage[] = [];
+      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
       const chain = lib.initChain();
 
@@ -907,10 +1026,10 @@ describe('Server Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
-      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
       const callCounts = {
         onOutStreamEnded: 0,
       };
+      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
       const chain = lib.initChain();
 
@@ -979,12 +1098,12 @@ describe('Server Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
-      let handlerError: grpc.ServiceError | null = null;
-      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
       const callCounts = {
         errorHandler: 0,
         onOutStreamEnded: 0,
       };
+      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
+      let handlerError: grpc.ServiceError | null = null;
 
       const chain = lib.initChain({
         errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
@@ -1001,12 +1120,12 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
             call.sendErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
             done();
           },
         ),
@@ -1088,7 +1207,7 @@ describe('Server Streaming Calls', () => {
         setTimeout(() => stream.cancel(), 100);
       });
 
-      // Allow 100 ms of grace time for all the callbacks to fire
+      // Provide some grace time for all the callbacks to fire
       await new Promise((resolve) => {
         setTimeout(() => resolve(), 100);
       });
@@ -1115,10 +1234,10 @@ describe('Server Streaming Calls', () => {
     let server: grpc.Server | null = null;
 
     try {
-      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
       const callCounts = {
         onOutStreamEnded: 0,
       };
+      let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
       const chain = lib.initChain();
 
@@ -1211,7 +1330,7 @@ describe('Server Streaming Calls', () => {
         setTimeout(() => proxy.close(), 100);
       });
 
-      // Allow 100 ms of grace time for all the callbacks to fire
+      // Provide some grace time for all the callbacks to fire
       await new Promise((resolve) => {
         setTimeout(() => resolve(), 100);
       });
