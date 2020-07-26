@@ -1356,3 +1356,531 @@ describe('Server Streaming Calls', () => {
     }
   });
 });
+
+describe('Duplex Streaming Calls', () => {
+  it('Should exchange two payloads', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        onInStreamEnded: 0,
+        onOutStreamEnded: 0,
+        onMsgWritten: 0,
+        sendMsgCb: 0,
+      };
+      const payloadsFromClient: TestMessage[] = [];
+      const payloadsFromServer: TestMessage[] = [];
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(
+          TestService.biDirStreamTest,
+          async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onMsgWritten(() => callCounts.onMsgWritten++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+
+            call.onMsgIn((payload, tdone) => {
+              payloadsFromClient.push(payload);
+              tdone();
+            });
+
+            await new Promise((resolve) => setTimeout(() => resolve(), 100));
+
+            const msg = new TestMessage();
+            msg.setText('FromServer_0');
+            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+
+            await new Promise((resolve) => setTimeout(() => resolve(), 20));
+
+            msg.setText('FromServer_1');
+            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+
+            call.endOutStream();
+            // Second end should do nothing
+            call.endOutStream();
+
+            // Third send should do nothing
+            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+            done();
+          },
+        ),
+      });
+
+      server.start();
+
+      await new Promise(async (resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('data', (payload) => payloadsFromServer.push(payload));
+        stream.on('error', (err) => reject(err));
+        stream.on('end', () => resolve());
+
+        const msg = new TestMessage();
+        msg.setText('FromClient_0');
+        stream.write(msg);
+
+        await new Promise((resolve) => setTimeout(() => resolve(), 20));
+
+        msg.setText('FromClient_1');
+        stream.write(msg);
+
+        stream.end();
+      });
+
+      expect(callCounts).to.include({
+        onMsgWritten: 2,
+        sendMsgCb: 2,
+        onOutStreamEnded: 1,
+        onInStreamEnded: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: false,
+          cancelled: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .but.not.have.keys('err');
+      expect(payloadsFromServer).to.have.length(2);
+      expect(payloadsFromServer[0].getText()).to.equal('FromServer_0');
+      expect(payloadsFromServer[1].getText()).to.equal('FromServer_1');
+      expect(payloadsFromClient).to.have.length(2);
+      expect(payloadsFromClient[0].getText()).to.equal('FromClient_0');
+      expect(payloadsFromClient[1].getText()).to.equal('FromClient_1');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should respond with one payload', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        onOutStreamEnded: 0,
+        onInStreamEnded: 0,
+        onMsgWritten: 0,
+      };
+      const payloadsFromServer: TestMessage[] = [];
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(
+          TestService.biDirStreamTest,
+          async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onMsgWritten(() => callCounts.onMsgWritten++);
+
+            await new Promise((resolve) => setTimeout(() => resolve(), 100));
+
+            const msg = new TestMessage();
+            msg.setText('FromServer_0');
+            call.sendMsg(msg);
+            call.endOutStream();
+            done();
+          },
+        ),
+      });
+
+      server.start();
+
+      await new Promise((resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('data', (payload) => payloadsFromServer.push(payload));
+        stream.on('error', (err) => reject(err));
+        stream.on('end', () => resolve());
+        stream.end();
+      });
+
+      expect(callCounts).to.include({
+        onOutStreamEnded: 1,
+        onInStreamEnded: 1,
+        onMsgWritten: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: false,
+          cancelled: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .but.not.have.keys('err');
+      expect(payloadsFromServer).to.have.length(1);
+      expect(payloadsFromServer[0].getText()).to.equal('FromServer_0');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should respond with an error', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        onOutStreamEnded: 0,
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(
+          TestService.biDirStreamTest,
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.sendErr({
+              code: grpc.status.UNAUTHENTICATED,
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+
+            // Second send should do nothing
+            call.sendErr({
+              code: grpc.status.UNAUTHENTICATED,
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+
+            done();
+          },
+        ),
+      });
+
+      server.start();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('end', () => reject(new Error('Expected error before stream end')));
+        stream.on('data', () => reject(new Error('Expected error before data')));
+        stream.on('error', (err) => resolve(err as grpc.ServiceError));
+        stream.end();
+      });
+
+      expect(callCounts).to.include({
+        onOutStreamEnded: 1,
+        onInStreamEnded: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .and.have.keys('err');
+      expect(error.code)
+        .to.equal((_call.err as grpc.ServiceError).code)
+        .to.equal(grpc.status.UNAUTHENTICATED);
+      expect(error.details)
+        .to.equal((_call.err as grpc.ServiceError).details)
+        .to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should respond with an error and execute error handler', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        errorHandler: 0,
+        onOutStreamEnded: 0,
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+      let handlerError: grpc.ServiceError | null = null;
+
+      const chain = lib.initChain({
+        errorHandler: (err: grpc.ServiceError): grpc.ServiceError => {
+          handlerError = err;
+          callCounts.errorHandler++;
+          return err;
+        },
+      });
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(
+          TestService.biDirStreamTest,
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.sendErr({
+              code: grpc.status.UNAUTHENTICATED,
+              metadata: new grpc.Metadata(),
+              details: 'Invalid token',
+            });
+            done();
+          },
+        ),
+      });
+
+      server.start();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('end', () => reject(new Error('Expected error before stream end')));
+        stream.on('data', () => reject(new Error('Expected error before data')));
+        stream.on('error', (err) => resolve(err as grpc.ServiceError));
+        stream.end();
+      });
+
+      expect(callCounts).to.include({
+        errorHandler: 1,
+        onOutStreamEnded: 1,
+        onInStreamEnded: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .and.have.keys('err');
+      expect(handlerError).to.not.be.null;
+      expect(error.code)
+        .to.equal(handlerError.code)
+        .to.equal((_call.err as grpc.ServiceError).code)
+        .to.equal(grpc.status.UNAUTHENTICATED);
+      expect(error.details)
+        .to.equal(handlerError.details)
+        .to.equal((_call.err as grpc.ServiceError).details)
+        .to.equal('Invalid token');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should cancel', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        onInStreamEnded: 0,
+        onOutStreamEnded: 0,
+      };
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(
+          TestService.biDirStreamTest,
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            done();
+          },
+        ),
+      });
+
+      server.start();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('end', () => reject(new Error('Expected error before stream end')));
+        stream.on('data', () => reject(new Error('Expected error before data')));
+        stream.on('error', (err) => resolve(err as grpc.ServiceError));
+        setTimeout(() => stream.cancel(), 100);
+      });
+
+      // Provide some grace time for all the callbacks to fire
+      await new Promise((resolve) => {
+        setTimeout(() => resolve(), 100);
+      });
+
+      expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
+      expect(callCounts).to.include({ onInStreamEnded: 1, onOutStreamEnded: 1 });
+      expect(_call)
+        .to.include({
+          cancelled: true,
+          errOccurred: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .but.not.have.keys('err');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should fail with an internal error', async () => {
+    let server: grpc.Server | null = null;
+
+    try {
+      const callCounts = {
+        onOutStreamEnded: 0,
+        onInStreamEnded: 0,
+      };
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer({
+        rpcTest: chain(TestService.rpcTest, () => 0),
+        clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+        serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+        biDirStreamTest: chain(
+          TestService.biDirStreamTest,
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            _call = call;
+            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            // Simulate an internal failure by emitting directly on the stream
+            call.core.emit('error', new Error('Some internal streaming error'));
+            done();
+          },
+        ),
+      });
+
+      server.start();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('end', () => reject(new Error('Expected error before stream end')));
+        stream.on('data', () => reject(new Error('Expected error before data')));
+        stream.on('error', (err) => resolve(err as grpc.ServiceError));
+      });
+
+      expect(error.message).to.equal('2 UNKNOWN: Some internal streaming error');
+      expect(callCounts).to.include({
+        onOutStreamEnded: 1,
+        onInStreamEnded: 1,
+      });
+      expect(_call)
+        .to.include({
+          errOccurred: true,
+          cancelled: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .and.have.keys('err');
+      expect((_call.err as Error).message).to.equal('Some internal streaming error');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+    }
+  });
+
+  it('Should cancel due to network loss', async () => {
+    let server: grpc.Server | null = null;
+    let proxy: TestProxy | null = null;
+
+    try {
+      const callCounts = {
+        onInStreamEnded: 0,
+        onOutStreamEnded: 0,
+      };
+      let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
+
+      const chain = lib.initChain();
+
+      server = await createTestServer(
+        {
+          rpcTest: chain(TestService.rpcTest, () => 0),
+          clientStreamTest: chain(TestService.clientStreamTest, () => 0),
+          serverStreamTest: chain(TestService.serverStreamTest, () => 0),
+          biDirStreamTest: chain(
+            TestService.biDirStreamTest,
+            (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+              _call = call;
+              call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+              call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+              done();
+            },
+          ),
+        },
+        true,
+      );
+
+      server.start();
+
+      proxy = createProxy();
+      proxy.listen();
+
+      const error = await new Promise<grpc.ServiceError>((resolve, reject) => {
+        const stream = createTestClient().biDirStreamTest();
+        stream.on('end', () => reject(new Error('Expected error before stream end')));
+        stream.on('data', () => reject(new Error('Expected error before data')));
+        stream.on('error', (err) => resolve(err as grpc.ServiceError));
+        setTimeout(() => proxy.close(), 100);
+      });
+
+      // Provide some grace time for all the callbacks to fire
+      await new Promise((resolve) => {
+        setTimeout(() => resolve(), 100);
+      });
+
+      expect(error.message).to.equal('14 UNAVAILABLE: Connection dropped');
+      expect(callCounts).to.include({ onInStreamEnded: 1, onOutStreamEnded: 1 });
+      expect(_call)
+        .to.include({
+          cancelled: true,
+          errOccurred: false,
+          outStreamEnded: true,
+          inStreamEnded: true,
+        })
+        .but.not.have.keys('err');
+    } catch (err) {
+      expect.fail(err);
+    } finally {
+      if (server) {
+        server.forceShutdown();
+      }
+      if (proxy) {
+        proxy.close();
+      }
+    }
+  });
+});

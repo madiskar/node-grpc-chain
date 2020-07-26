@@ -583,9 +583,6 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
     });
 
     core.once('error', (err) => {
-      call.errOccurred = true;
-      call.inStreamEnded = true;
-      call.outStreamEnded = true;
       if (!call.err) {
         call.errOccurred = true;
         call.err = err;
@@ -603,6 +600,9 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
 
     core.once('cancelled', () => {
       if (call.errOccurred || call.cancelled) {
+        return;
+      }
+      if (call.inStreamEnded && call.outStreamEnded) {
         return;
       }
       call.cancelled = true;
