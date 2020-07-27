@@ -54,18 +54,18 @@ export class Tunnel<T extends jspb.Message> {
 
 export interface InboundTunneledStream<T extends jspb.Message> {
   _tun: Tunnel<T>;
-  inStreamEnded: boolean;
-  onMsgIn: (gate: TunnelGate<T>) => void;
-  onInStreamEnded: (cb: () => void) => void;
+  clientStreamEnded: boolean;
+  onStreamData: (gate: TunnelGate<T>) => void;
+  onClientStreamEnded: (cb: () => void) => void;
 }
 
 export interface OutboundTunneledStream<V extends jspb.Message> {
-  outStreamEnded: boolean;
-  sendMsg: (payload: V, cb?: () => void) => void;
-  sendErr: (err: grpc.StatusObject) => void;
-  onMsgWritten: (cb: (payload: V) => void) => void;
-  endOutStream: () => void;
-  onOutStreamEnded: (cb: () => void) => void;
+  serverStreamEnded: boolean;
+  write: (payload: V, cb?: () => void) => void;
+  writeErr: (err: grpc.StatusObject) => void;
+  onPayloadWritten: (cb: (payload: V) => void) => void;
+  endServerStream: () => void;
+  onServerStreamEnded: (cb: () => void) => void;
 }
 
 export interface UnaryRespondable<V extends jspb.Message> {
@@ -79,7 +79,7 @@ export interface UnaryRespondable<V extends jspb.Message> {
 
 export interface UnaryReadable<T extends jspb.Message> {
   req: T | null;
-  onUnaryCallCancelled: (cb: () => void) => void;
+  onUnaryCancelled: (cb: () => void) => void;
 }
 
 export interface Common {
@@ -284,7 +284,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
         evts.once(EVT_UNARY_DATA_SENT, cb);
       },
 
-      onUnaryCallCancelled: (cb: () => void) => {
+      onUnaryCancelled: (cb: () => void) => {
         evts.once(EVT_UNARY_CALL_CANCELLED, cb);
       },
     };
@@ -321,7 +321,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       cancelled: false,
       errOccurred: false,
       unaryResponseSent: false,
-      inStreamEnded: false,
+      clientStreamEnded: false,
 
       sendUnaryErr: async (err: grpc.StatusObject) => {
         if (call.unaryResponseSent || call.errOccurred || call.cancelled) {
@@ -334,8 +334,8 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         } else {
           call.err = err;
         }
-        if (!call.inStreamEnded) {
-          call.inStreamEnded = true;
+        if (!call.clientStreamEnded) {
+          call.clientStreamEnded = true;
           evts.emit(EVT_IN_STREAM_ENDED);
         }
         call.unaryResponseSent = true;
@@ -350,13 +350,13 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         call.unaryResponseSent = true;
         callback(null, payload, trailer, flags);
         evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
-        if (!call.inStreamEnded) {
-          call.inStreamEnded = true;
+        if (!call.clientStreamEnded) {
+          call.clientStreamEnded = true;
           evts.emit(EVT_IN_STREAM_ENDED);
         }
       },
 
-      onMsgIn: (gate: TunnelGate<T>) => {
+      onStreamData: (gate: TunnelGate<T>) => {
         tun.addGate(gate);
       },
 
@@ -366,14 +366,14 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         evts.once(EVT_UNARY_DATA_SENT, cb);
       },
 
-      onInStreamEnded: (cb: () => void) => {
+      onClientStreamEnded: (cb: () => void) => {
         evts.once(EVT_IN_STREAM_ENDED, cb);
       },
     };
 
     core.once('end', () => {
-      if (!call.inStreamEnded) {
-        call.inStreamEnded = true;
+      if (!call.clientStreamEnded) {
+        call.clientStreamEnded = true;
         evts.emit(EVT_IN_STREAM_ENDED);
       }
     });
@@ -383,8 +383,8 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         call.errOccurred = true;
         call.err = err;
       }
-      if (!call.inStreamEnded) {
-        call.inStreamEnded = true;
+      if (!call.clientStreamEnded) {
+        call.clientStreamEnded = true;
         evts.emit(EVT_IN_STREAM_ENDED);
       }
     });
@@ -394,8 +394,8 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         return;
       }
       call.cancelled = true;
-      if (!call.inStreamEnded) {
-        call.inStreamEnded = true;
+      if (!call.clientStreamEnded) {
+        call.clientStreamEnded = true;
         evts.emit(EVT_IN_STREAM_ENDED);
       }
     });
@@ -425,10 +425,10 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
       req: core.request,
       cancelled: false,
       errOccurred: false,
-      outStreamEnded: false,
+      serverStreamEnded: false,
 
-      sendMsg: (payload: V, cb?: () => void) => {
-        if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      write: (payload: V, cb?: () => void) => {
+        if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
           return;
         }
         core.write(payload, () => {
@@ -439,8 +439,8 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         });
       },
 
-      sendErr: async (err: grpc.StatusObject) => {
-        if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      writeErr: async (err: grpc.StatusObject) => {
+        if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
           return;
         }
         call.errOccurred = true;
@@ -453,24 +453,24 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         core.emit('error', call.err);
       },
 
-      endOutStream: () => {
-        if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      endServerStream: () => {
+        if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
           return;
         }
-        call.outStreamEnded = true;
+        call.serverStreamEnded = true;
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
       },
 
-      onMsgWritten: (cb: (payload: V) => void) => {
+      onPayloadWritten: (cb: (payload: V) => void) => {
         evts.on(EVT_STREAM_MSG_WRITTEN, cb);
       },
 
-      onOutStreamEnded: (cb: () => void) => {
+      onServerStreamEnded: (cb: () => void) => {
         evts.once(EVT_OUT_STREAM_ENDED, cb);
       },
 
-      onUnaryCallCancelled: (cb: () => void) => {
+      onUnaryCancelled: (cb: () => void) => {
         evts.once(EVT_UNARY_CALL_CANCELLED, cb);
       },
     };
@@ -480,19 +480,19 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         call.errOccurred = true;
         call.err = err;
       }
-      if (!call.outStreamEnded) {
-        call.outStreamEnded = true;
+      if (!call.serverStreamEnded) {
+        call.serverStreamEnded = true;
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
       }
     });
 
     core.once('cancelled', () => {
-      if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
         return;
       }
       call.cancelled = true;
-      call.outStreamEnded = true;
+      call.serverStreamEnded = true;
       core.end();
       evts.emit(EVT_UNARY_CALL_CANCELLED);
       evts.emit(EVT_OUT_STREAM_ENDED);
@@ -520,19 +520,19 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       _tun: tun,
       cancelled: false,
       errOccurred: false,
-      outStreamEnded: false,
-      inStreamEnded: false,
+      serverStreamEnded: false,
+      clientStreamEnded: false,
 
-      onMsgIn: (gate: TunnelGate<T>) => {
+      onStreamData: (gate: TunnelGate<T>) => {
         tun.addGate(gate);
       },
 
-      onInStreamEnded: (cb: () => void) => {
+      onClientStreamEnded: (cb: () => void) => {
         evts.once(EVT_IN_STREAM_ENDED, cb);
       },
 
-      sendMsg: (payload: V, cb?: () => void) => {
-        if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      write: (payload: V, cb?: () => void) => {
+        if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
           return;
         }
         core.write(payload, () => {
@@ -543,8 +543,8 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         });
       },
 
-      sendErr: async (err: grpc.StatusObject) => {
-        if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      writeErr: async (err: grpc.StatusObject) => {
+        if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
           return;
         }
         call.errOccurred = true;
@@ -557,27 +557,27 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         core.emit('error', call.err);
       },
 
-      onMsgWritten: (cb: (payload: V) => void) => {
+      onPayloadWritten: (cb: (payload: V) => void) => {
         evts.on(EVT_STREAM_MSG_WRITTEN, cb);
       },
 
-      endOutStream: () => {
-        if (call.errOccurred || call.cancelled || call.outStreamEnded) {
+      endServerStream: () => {
+        if (call.errOccurred || call.cancelled || call.serverStreamEnded) {
           return;
         }
-        call.outStreamEnded = true;
+        call.serverStreamEnded = true;
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
       },
 
-      onOutStreamEnded: (cb: (err?: grpc.StatusObject | null) => void) => {
+      onServerStreamEnded: (cb: (err?: grpc.StatusObject | null) => void) => {
         evts.once(EVT_OUT_STREAM_ENDED, cb);
       },
     };
 
     core.once('end', () => {
-      if (!call.inStreamEnded) {
-        call.inStreamEnded = true;
+      if (!call.clientStreamEnded) {
+        call.clientStreamEnded = true;
         evts.emit(EVT_IN_STREAM_ENDED);
       }
     });
@@ -587,12 +587,12 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         call.errOccurred = true;
         call.err = err;
       }
-      if (!call.inStreamEnded) {
-        call.inStreamEnded = true;
+      if (!call.clientStreamEnded) {
+        call.clientStreamEnded = true;
         evts.emit(EVT_IN_STREAM_ENDED);
       }
-      if (!call.outStreamEnded) {
-        call.outStreamEnded = true;
+      if (!call.serverStreamEnded) {
+        call.serverStreamEnded = true;
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
       }
@@ -602,16 +602,16 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       if (call.errOccurred || call.cancelled) {
         return;
       }
-      if (call.inStreamEnded && call.outStreamEnded) {
+      if (call.clientStreamEnded && call.serverStreamEnded) {
         return;
       }
       call.cancelled = true;
-      if (!call.inStreamEnded) {
-        call.inStreamEnded = true;
+      if (!call.clientStreamEnded) {
+        call.clientStreamEnded = true;
         evts.emit(EVT_IN_STREAM_ENDED);
       }
-      if (!call.outStreamEnded) {
-        call.outStreamEnded = true;
+      if (!call.serverStreamEnded) {
+        call.serverStreamEnded = true;
         core.end();
         evts.emit(EVT_OUT_STREAM_ENDED);
       }

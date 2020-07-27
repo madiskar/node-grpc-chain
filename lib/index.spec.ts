@@ -325,7 +325,7 @@ describe('Unary Calls', () => {
 
     try {
       const callCounts = {
-        onUnaryCallCancelled: 0,
+        onUnaryCancelled: 0,
         onUnaryResponseSent: 0,
       };
       let _call: lib.ChainServerUnaryCall<TestMessage, TestMessage> | null = null;
@@ -335,7 +335,7 @@ describe('Unary Calls', () => {
       server = await createTestServer({
         rpcTest: chain(TestService.rpcTest, (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>) => {
           _call = call;
-          call.onUnaryCallCancelled(() => callCounts.onUnaryCallCancelled++);
+          call.onUnaryCancelled(() => callCounts.onUnaryCancelled++);
           call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
         }),
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
@@ -361,7 +361,7 @@ describe('Unary Calls', () => {
       });
 
       expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
-      expect(callCounts).to.include({ onUnaryCallCancelled: 1, onUnaryResponseSent: 0 });
+      expect(callCounts).to.include({ onUnaryCancelled: 1, onUnaryResponseSent: 0 });
       expect(_call)
         .to.include({
           cancelled: true,
@@ -385,7 +385,7 @@ describe('Client Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
         onUnaryResponseSent: 0,
       };
       const payloadsFromClient: TestMessage[] = [];
@@ -399,13 +399,13 @@ describe('Client Streaming Calls', () => {
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
-            call.onMsgIn((payload: TestMessage, tdone: lib.DoneFunction) => {
+            call.onStreamData((payload: TestMessage, tdone: lib.DoneFunction) => {
               payloadsFromClient.push(payload);
               tdone();
             });
-            call.onInStreamEnded(() => {
+            call.onClientStreamEnded(() => {
               const payload = new TestMessage();
               payload.setText('Hello Test!');
               call.sendUnaryData(payload);
@@ -440,14 +440,14 @@ describe('Client Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onInStreamEnded: 1,
+        onClientStreamEnded: 1,
         onUnaryResponseSent: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: false,
           cancelled: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: true,
         })
         .but.not.have.keys('err');
@@ -469,7 +469,7 @@ describe('Client Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
         onUnaryResponseSent: 0,
       };
       let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
@@ -482,7 +482,7 @@ describe('Client Streaming Calls', () => {
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
               code: grpc.status.UNAUTHENTICATED,
@@ -514,14 +514,14 @@ describe('Client Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onInStreamEnded: 1,
+        onClientStreamEnded: 1,
         onUnaryResponseSent: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: true,
         })
         .and.have.keys('err');
@@ -546,7 +546,7 @@ describe('Client Streaming Calls', () => {
     try {
       const callCounts = {
         errorHandler: 0,
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
         onUnaryResponseSent: 0,
       };
       let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
@@ -566,7 +566,7 @@ describe('Client Streaming Calls', () => {
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
               code: grpc.status.UNAUTHENTICATED,
@@ -593,14 +593,14 @@ describe('Client Streaming Calls', () => {
 
       expect(callCounts).to.include({
         errorHandler: 1,
-        onInStreamEnded: 1,
+        onClientStreamEnded: 1,
         onUnaryResponseSent: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: true,
         })
         .and.have.keys('err');
@@ -628,7 +628,7 @@ describe('Client Streaming Calls', () => {
     try {
       const callCounts = {
         onUnaryResponseSent: 0,
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
       let handler1 = false;
@@ -644,13 +644,13 @@ describe('Client Streaming Calls', () => {
             _call = call;
             handler1 = true;
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.sendUnaryData(new TestMessage());
           },
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             handler2 = true;
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             done();
           },
         ),
@@ -670,14 +670,14 @@ describe('Client Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onInStreamEnded: 1,
+        onClientStreamEnded: 1,
         onUnaryResponseSent: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: false,
           cancelled: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: true,
         })
         .but.not.have.keys('err');
@@ -697,7 +697,7 @@ describe('Client Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
 
@@ -709,7 +709,7 @@ describe('Client Streaming Calls', () => {
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             done();
           },
         ),
@@ -735,12 +735,12 @@ describe('Client Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
-      expect(callCounts).to.include({ onInStreamEnded: 1 });
+      expect(callCounts).to.include({ onClientStreamEnded: 1 });
       expect(_call)
         .to.include({
           cancelled: true,
           errOccurred: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: false,
         })
         .but.not.have.keys('err');
@@ -758,7 +758,7 @@ describe('Client Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
 
@@ -770,7 +770,7 @@ describe('Client Streaming Calls', () => {
           TestService.clientStreamTest,
           (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
             _call = call;
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             // Simulate an internal failure by emitting directly on the stream
             call.core.emit('error', new Error('Some internal streaming error'));
           },
@@ -792,13 +792,13 @@ describe('Client Streaming Calls', () => {
 
       expect(error.message).to.equal('2 UNKNOWN: Some internal streaming error');
       expect(callCounts).to.include({
-        onInStreamEnded: 1,
+        onClientStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: false,
         })
         .and.have.keys('err');
@@ -818,7 +818,7 @@ describe('Client Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerReadableStream<TestMessage, TestMessage> | null = null;
 
@@ -831,7 +831,7 @@ describe('Client Streaming Calls', () => {
             TestService.clientStreamTest,
             (call: lib.ChainServerReadableStream<TestMessage, TestMessage>) => {
               _call = call;
-              call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+              call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             },
           ),
           serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -861,12 +861,12 @@ describe('Client Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('14 UNAVAILABLE: Connection dropped');
-      expect(callCounts).to.include({ onInStreamEnded: 1 });
+      expect(callCounts).to.include({ onClientStreamEnded: 1 });
       expect(_call)
         .to.include({
           cancelled: true,
           errOccurred: false,
-          inStreamEnded: true,
+          clientStreamEnded: true,
           unaryResponseSent: false,
         })
         .but.not.have.keys('err');
@@ -889,9 +889,9 @@ describe('Server Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onMsgWritten: 0,
-        sendMsgCb: 0,
-        onOutStreamEnded: 0,
+        onPayloadWritten: 0,
+        writeCb: 0,
+        onServerStreamEnded: 0,
       };
       const payloadsFromServer: TestMessage[] = [];
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
@@ -905,24 +905,24 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           async (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onMsgWritten(() => callCounts.onMsgWritten++);
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onPayloadWritten(() => callCounts.onPayloadWritten++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
 
             const msg = new TestMessage();
             msg.setText('FromServer_0');
-            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+            call.write(msg, () => callCounts.writeCb++);
 
             // Artifical delay between stream payloads
             await new Promise((resolve) => setTimeout(() => resolve(), 50));
 
             msg.setText('FromServer_1');
-            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+            call.write(msg, () => callCounts.writeCb++);
 
-            call.endOutStream();
+            call.endServerStream();
             // Second end should do nothing
-            call.endOutStream();
+            call.endServerStream();
             // Third send should do nothing
-            call.sendMsg(msg);
+            call.write(msg);
             done();
           },
         ),
@@ -939,15 +939,15 @@ describe('Server Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onMsgWritten: 2,
-        sendMsgCb: 2,
-        onOutStreamEnded: 1,
+        onPayloadWritten: 2,
+        writeCb: 2,
+        onServerStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: false,
           cancelled: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .but.not.have.keys('err');
       expect(payloadsFromServer).to.have.length(2);
@@ -967,7 +967,7 @@ describe('Server Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onOutStreamEnded: 0,
+        onServerStreamEnded: 0,
       };
       const payloadsFromServer: TestMessage[] = [];
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
@@ -981,11 +981,11 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           async (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             const msg = new TestMessage();
             msg.setText('FromServer_0');
-            call.sendMsg(msg);
-            call.endOutStream();
+            call.write(msg);
+            call.endServerStream();
             done();
           },
         ),
@@ -1002,13 +1002,13 @@ describe('Server Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onOutStreamEnded: 1,
+        onServerStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: false,
           cancelled: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .but.not.have.keys('err');
       expect(payloadsFromServer).to.have.length(1);
@@ -1027,7 +1027,7 @@ describe('Server Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onOutStreamEnded: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
@@ -1040,15 +1040,15 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.sendErr({
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.writeErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
 
             // Second send should do nothing
-            call.sendErr({
+            call.writeErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
@@ -1070,13 +1070,13 @@ describe('Server Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onOutStreamEnded: 1,
+        onServerStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .and.have.keys('err');
       expect(error.code)
@@ -1100,7 +1100,7 @@ describe('Server Streaming Calls', () => {
     try {
       const callCounts = {
         errorHandler: 0,
-        onOutStreamEnded: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
       let handlerError: grpc.ServiceError | null = null;
@@ -1120,8 +1120,8 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.sendErr({
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.writeErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
@@ -1143,13 +1143,13 @@ describe('Server Streaming Calls', () => {
 
       expect(callCounts).to.include({
         errorHandler: 1,
-        onOutStreamEnded: 1,
+        onServerStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .and.have.keys('err');
       expect(handlerError).to.not.be.null;
@@ -1175,8 +1175,8 @@ describe('Server Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onUnaryCallCancelled: 0,
-        onOutStreamEnded: 0,
+        onUnaryCancelled: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
@@ -1189,8 +1189,8 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onUnaryCallCancelled(() => callCounts.onUnaryCallCancelled++);
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onUnaryCancelled(() => callCounts.onUnaryCancelled++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             done();
           },
         ),
@@ -1213,12 +1213,12 @@ describe('Server Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
-      expect(callCounts).to.include({ onUnaryCallCancelled: 1, onOutStreamEnded: 1 });
+      expect(callCounts).to.include({ onUnaryCancelled: 1, onServerStreamEnded: 1 });
       expect(_call)
         .to.include({
           cancelled: true,
           errOccurred: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .but.not.have.keys('err');
     } catch (err) {
@@ -1235,7 +1235,7 @@ describe('Server Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onOutStreamEnded: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
@@ -1248,7 +1248,7 @@ describe('Server Streaming Calls', () => {
           TestService.serverStreamTest,
           (call: lib.ChainServerWritableStream<TestMessage, TestMessage>) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             // Simulate an internal failure by emitting directly on the stream
             call.core.emit('error', new Error('Some internal streaming error'));
           },
@@ -1268,13 +1268,13 @@ describe('Server Streaming Calls', () => {
 
       expect(error.message).to.equal('2 UNKNOWN: Some internal streaming error');
       expect(callCounts).to.include({
-        onOutStreamEnded: 1,
+        onServerStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .and.have.keys('err');
       expect((_call.err as Error).message).to.equal('Some internal streaming error');
@@ -1293,8 +1293,8 @@ describe('Server Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onUnaryCallCancelled: 0,
-        onOutStreamEnded: 0,
+        onUnaryCancelled: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerWritableStream<TestMessage, TestMessage> | null = null;
 
@@ -1308,8 +1308,8 @@ describe('Server Streaming Calls', () => {
             TestService.serverStreamTest,
             (call: lib.ChainServerWritableStream<TestMessage, TestMessage>) => {
               _call = call;
-              call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-              call.onUnaryCallCancelled(() => callCounts.onUnaryCallCancelled++);
+              call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+              call.onUnaryCancelled(() => callCounts.onUnaryCancelled++);
             },
           ),
           biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
@@ -1336,12 +1336,12 @@ describe('Server Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('14 UNAVAILABLE: Connection dropped');
-      expect(callCounts).to.include({ onUnaryCallCancelled: 1, onOutStreamEnded: 1 });
+      expect(callCounts).to.include({ onUnaryCancelled: 1, onServerStreamEnded: 1 });
       expect(_call)
         .to.include({
           cancelled: true,
           errOccurred: false,
-          outStreamEnded: true,
+          serverStreamEnded: true,
         })
         .but.not.have.keys('err');
     } catch (err) {
@@ -1363,10 +1363,10 @@ describe('Duplex Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
-        onOutStreamEnded: 0,
-        onMsgWritten: 0,
-        sendMsgCb: 0,
+        onClientStreamEnded: 0,
+        onServerStreamEnded: 0,
+        onPayloadWritten: 0,
+        writeCb: 0,
       };
       const payloadsFromClient: TestMessage[] = [];
       const payloadsFromServer: TestMessage[] = [];
@@ -1382,11 +1382,11 @@ describe('Duplex Streaming Calls', () => {
           TestService.biDirStreamTest,
           async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onMsgWritten(() => callCounts.onMsgWritten++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
+            call.onPayloadWritten(() => callCounts.onPayloadWritten++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
 
-            call.onMsgIn((payload, tdone) => {
+            call.onStreamData((payload, tdone) => {
               payloadsFromClient.push(payload);
               tdone();
             });
@@ -1395,19 +1395,19 @@ describe('Duplex Streaming Calls', () => {
 
             const msg = new TestMessage();
             msg.setText('FromServer_0');
-            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+            call.write(msg, () => callCounts.writeCb++);
 
             await new Promise((resolve) => setTimeout(() => resolve(), 20));
 
             msg.setText('FromServer_1');
-            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+            call.write(msg, () => callCounts.writeCb++);
 
-            call.endOutStream();
+            call.endServerStream();
             // Second end should do nothing
-            call.endOutStream();
+            call.endServerStream();
 
             // Third send should do nothing
-            call.sendMsg(msg, () => callCounts.sendMsgCb++);
+            call.write(msg, () => callCounts.writeCb++);
             done();
           },
         ),
@@ -1434,17 +1434,17 @@ describe('Duplex Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onMsgWritten: 2,
-        sendMsgCb: 2,
-        onOutStreamEnded: 1,
-        onInStreamEnded: 1,
+        onPayloadWritten: 2,
+        writeCb: 2,
+        onServerStreamEnded: 1,
+        onClientStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: false,
           cancelled: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .but.not.have.keys('err');
       expect(payloadsFromServer).to.have.length(2);
@@ -1467,9 +1467,9 @@ describe('Duplex Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onOutStreamEnded: 0,
-        onInStreamEnded: 0,
-        onMsgWritten: 0,
+        onServerStreamEnded: 0,
+        onClientStreamEnded: 0,
+        onPayloadWritten: 0,
       };
       const payloadsFromServer: TestMessage[] = [];
       let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
@@ -1484,16 +1484,16 @@ describe('Duplex Streaming Calls', () => {
           TestService.biDirStreamTest,
           async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
-            call.onMsgWritten(() => callCounts.onMsgWritten++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
+            call.onPayloadWritten(() => callCounts.onPayloadWritten++);
 
             await new Promise((resolve) => setTimeout(() => resolve(), 100));
 
             const msg = new TestMessage();
             msg.setText('FromServer_0');
-            call.sendMsg(msg);
-            call.endOutStream();
+            call.write(msg);
+            call.endServerStream();
             done();
           },
         ),
@@ -1510,16 +1510,16 @@ describe('Duplex Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onOutStreamEnded: 1,
-        onInStreamEnded: 1,
-        onMsgWritten: 1,
+        onServerStreamEnded: 1,
+        onClientStreamEnded: 1,
+        onPayloadWritten: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: false,
           cancelled: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .but.not.have.keys('err');
       expect(payloadsFromServer).to.have.length(1);
@@ -1538,8 +1538,8 @@ describe('Duplex Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onOutStreamEnded: 0,
-        onInStreamEnded: 0,
+        onServerStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
 
@@ -1553,16 +1553,16 @@ describe('Duplex Streaming Calls', () => {
           TestService.biDirStreamTest,
           (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
-            call.sendErr({
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
+            call.writeErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
 
             // Second send should do nothing
-            call.sendErr({
+            call.writeErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
@@ -1584,15 +1584,15 @@ describe('Duplex Streaming Calls', () => {
       });
 
       expect(callCounts).to.include({
-        onOutStreamEnded: 1,
-        onInStreamEnded: 1,
+        onServerStreamEnded: 1,
+        onClientStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .and.have.keys('err');
       expect(error.code)
@@ -1616,8 +1616,8 @@ describe('Duplex Streaming Calls', () => {
     try {
       const callCounts = {
         errorHandler: 0,
-        onOutStreamEnded: 0,
-        onInStreamEnded: 0,
+        onServerStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
       let handlerError: grpc.ServiceError | null = null;
@@ -1638,9 +1638,9 @@ describe('Duplex Streaming Calls', () => {
           TestService.biDirStreamTest,
           (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
-            call.sendErr({
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
+            call.writeErr({
               code: grpc.status.UNAUTHENTICATED,
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
@@ -1662,15 +1662,15 @@ describe('Duplex Streaming Calls', () => {
 
       expect(callCounts).to.include({
         errorHandler: 1,
-        onOutStreamEnded: 1,
-        onInStreamEnded: 1,
+        onServerStreamEnded: 1,
+        onClientStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .and.have.keys('err');
       expect(handlerError).to.not.be.null;
@@ -1696,8 +1696,8 @@ describe('Duplex Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
-        onOutStreamEnded: 0,
+        onClientStreamEnded: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
 
@@ -1711,8 +1711,8 @@ describe('Duplex Streaming Calls', () => {
           TestService.biDirStreamTest,
           (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             done();
           },
         ),
@@ -1734,13 +1734,13 @@ describe('Duplex Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('1 CANCELLED: Cancelled on client');
-      expect(callCounts).to.include({ onInStreamEnded: 1, onOutStreamEnded: 1 });
+      expect(callCounts).to.include({ onClientStreamEnded: 1, onServerStreamEnded: 1 });
       expect(_call)
         .to.include({
           cancelled: true,
           errOccurred: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .but.not.have.keys('err');
     } catch (err) {
@@ -1757,8 +1757,8 @@ describe('Duplex Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onOutStreamEnded: 0,
-        onInStreamEnded: 0,
+        onServerStreamEnded: 0,
+        onClientStreamEnded: 0,
       };
       let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
 
@@ -1772,8 +1772,8 @@ describe('Duplex Streaming Calls', () => {
           TestService.biDirStreamTest,
           (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
             _call = call;
-            call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-            call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+            call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+            call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             // Simulate an internal failure by emitting directly on the stream
             call.core.emit('error', new Error('Some internal streaming error'));
             done();
@@ -1792,15 +1792,15 @@ describe('Duplex Streaming Calls', () => {
 
       expect(error.message).to.equal('2 UNKNOWN: Some internal streaming error');
       expect(callCounts).to.include({
-        onOutStreamEnded: 1,
-        onInStreamEnded: 1,
+        onServerStreamEnded: 1,
+        onClientStreamEnded: 1,
       });
       expect(_call)
         .to.include({
           errOccurred: true,
           cancelled: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .and.have.keys('err');
       expect((_call.err as Error).message).to.equal('Some internal streaming error');
@@ -1819,8 +1819,8 @@ describe('Duplex Streaming Calls', () => {
 
     try {
       const callCounts = {
-        onInStreamEnded: 0,
-        onOutStreamEnded: 0,
+        onClientStreamEnded: 0,
+        onServerStreamEnded: 0,
       };
       let _call: lib.ChainServerDuplexStream<TestMessage, TestMessage> | null = null;
 
@@ -1835,8 +1835,8 @@ describe('Duplex Streaming Calls', () => {
             TestService.biDirStreamTest,
             (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
               _call = call;
-              call.onOutStreamEnded(() => callCounts.onOutStreamEnded++);
-              call.onInStreamEnded(() => callCounts.onInStreamEnded++);
+              call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
+              call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
               done();
             },
           ),
@@ -1863,13 +1863,13 @@ describe('Duplex Streaming Calls', () => {
       });
 
       expect(error.message).to.equal('14 UNAVAILABLE: Connection dropped');
-      expect(callCounts).to.include({ onInStreamEnded: 1, onOutStreamEnded: 1 });
+      expect(callCounts).to.include({ onClientStreamEnded: 1, onServerStreamEnded: 1 });
       expect(_call)
         .to.include({
           cancelled: true,
           errOccurred: false,
-          outStreamEnded: true,
-          inStreamEnded: true,
+          serverStreamEnded: true,
+          clientStreamEnded: true,
         })
         .but.not.have.keys('err');
     } catch (err) {
