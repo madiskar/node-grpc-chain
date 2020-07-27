@@ -84,3 +84,5 @@ protoc.sh
 yarn.lock
 tsconfig.json
 .nycrc
+coverage-docker.sh
+test-docker.sh
