@@ -9,11 +9,11 @@ import {
 import * as jspb from 'google-protobuf';
 import { EventEmitter } from 'events';
 
-const EVT_UNARY_DATA_SENT = 'unary_data_sent';
-const EVT_IN_STREAM_ENDED = 'in_stream_ended';
-const EVT_OUT_STREAM_ENDED = 'out_stream_ended';
-const EVT_STREAM_MSG_WRITTEN = 'stream_msg_written';
-const EVT_UNARY_CALL_CANCELLED = 'unary_call_cancelled';
+const EVT_UNARY_RESPONSE_SENT = 'unary_response_sent';
+const EVT_CLIENT_STREAM_ENDED = 'client_stream_ended';
+const EVT_SERVER_STREAM_ENDED = 'server_stream_ended';
+const EVT_STREAM_PAYLOAD_WRITTEN = 'stream_payload_written';
+const EVT_UNARY_CANCELLED = 'unary_cancelled';
 
 /**
  * Context of a specific call.
@@ -266,7 +266,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
         }
         call.unaryResponseSent = true;
         callback(call.err, null);
-        evts.emit(EVT_UNARY_DATA_SENT, call.err);
+        evts.emit(EVT_UNARY_RESPONSE_SENT, call.err);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
@@ -275,17 +275,17 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
         }
         call.unaryResponseSent = true;
         callback(null, payload, trailer, flags);
-        evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
+        evts.emit(EVT_UNARY_RESPONSE_SENT, call.err, payload, trailer, flags);
       },
 
       onUnaryResponseSent: (
         cb: (err?: grpc.StatusObject | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
       ) => {
-        evts.once(EVT_UNARY_DATA_SENT, cb);
+        evts.once(EVT_UNARY_RESPONSE_SENT, cb);
       },
 
       onUnaryCancelled: (cb: () => void) => {
-        evts.once(EVT_UNARY_CALL_CANCELLED, cb);
+        evts.once(EVT_UNARY_CANCELLED, cb);
       },
     };
 
@@ -294,7 +294,7 @@ function wrapUnaryCall<T extends jspb.Message, V extends jspb.Message>(
         return;
       }
       call.cancelled = true;
-      evts.emit(EVT_UNARY_CALL_CANCELLED);
+      evts.emit(EVT_UNARY_CANCELLED);
     });
 
     executeHandlers(call as never, 0, handlers);
@@ -336,11 +336,11 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         }
         if (!call.clientStreamEnded) {
           call.clientStreamEnded = true;
-          evts.emit(EVT_IN_STREAM_ENDED);
+          evts.emit(EVT_CLIENT_STREAM_ENDED);
         }
         call.unaryResponseSent = true;
         callback(call.err, null);
-        evts.emit(EVT_UNARY_DATA_SENT, call.err);
+        evts.emit(EVT_UNARY_RESPONSE_SENT, call.err);
       },
 
       sendUnaryData: (payload: V, trailer?: grpc.Metadata, flags?: number) => {
@@ -349,10 +349,10 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
         }
         call.unaryResponseSent = true;
         callback(null, payload, trailer, flags);
-        evts.emit(EVT_UNARY_DATA_SENT, call.err, payload, trailer, flags);
+        evts.emit(EVT_UNARY_RESPONSE_SENT, call.err, payload, trailer, flags);
         if (!call.clientStreamEnded) {
           call.clientStreamEnded = true;
-          evts.emit(EVT_IN_STREAM_ENDED);
+          evts.emit(EVT_CLIENT_STREAM_ENDED);
         }
       },
 
@@ -363,18 +363,18 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       onUnaryResponseSent: (
         cb: (err?: grpc.StatusObject | null, payload?: V, trailer?: grpc.Metadata, flags?: number) => void,
       ) => {
-        evts.once(EVT_UNARY_DATA_SENT, cb);
+        evts.once(EVT_UNARY_RESPONSE_SENT, cb);
       },
 
       onClientStreamEnded: (cb: () => void) => {
-        evts.once(EVT_IN_STREAM_ENDED, cb);
+        evts.once(EVT_CLIENT_STREAM_ENDED, cb);
       },
     };
 
     core.once('end', () => {
       if (!call.clientStreamEnded) {
         call.clientStreamEnded = true;
-        evts.emit(EVT_IN_STREAM_ENDED);
+        evts.emit(EVT_CLIENT_STREAM_ENDED);
       }
     });
 
@@ -385,7 +385,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       }
       if (!call.clientStreamEnded) {
         call.clientStreamEnded = true;
-        evts.emit(EVT_IN_STREAM_ENDED);
+        evts.emit(EVT_CLIENT_STREAM_ENDED);
       }
     });
 
@@ -396,7 +396,7 @@ function wrapClientStreamingCall<T extends jspb.Message, V extends jspb.Message>
       call.cancelled = true;
       if (!call.clientStreamEnded) {
         call.clientStreamEnded = true;
-        evts.emit(EVT_IN_STREAM_ENDED);
+        evts.emit(EVT_CLIENT_STREAM_ENDED);
       }
     });
 
@@ -435,7 +435,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
           if (cb) {
             cb();
           }
-          evts.emit(EVT_STREAM_MSG_WRITTEN, payload);
+          evts.emit(EVT_STREAM_PAYLOAD_WRITTEN, payload);
         });
       },
 
@@ -459,19 +459,19 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
         }
         call.serverStreamEnded = true;
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_SERVER_STREAM_ENDED);
       },
 
       onPayloadWritten: (cb: (payload: V) => void) => {
-        evts.on(EVT_STREAM_MSG_WRITTEN, cb);
+        evts.on(EVT_STREAM_PAYLOAD_WRITTEN, cb);
       },
 
       onServerStreamEnded: (cb: () => void) => {
-        evts.once(EVT_OUT_STREAM_ENDED, cb);
+        evts.once(EVT_SERVER_STREAM_ENDED, cb);
       },
 
       onUnaryCancelled: (cb: () => void) => {
-        evts.once(EVT_UNARY_CALL_CANCELLED, cb);
+        evts.once(EVT_UNARY_CANCELLED, cb);
       },
     };
 
@@ -483,7 +483,7 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
       if (!call.serverStreamEnded) {
         call.serverStreamEnded = true;
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_SERVER_STREAM_ENDED);
       }
     });
 
@@ -494,8 +494,8 @@ function wrapServerStreamingCall<T extends jspb.Message, V extends jspb.Message>
       call.cancelled = true;
       call.serverStreamEnded = true;
       core.end();
-      evts.emit(EVT_UNARY_CALL_CANCELLED);
-      evts.emit(EVT_OUT_STREAM_ENDED);
+      evts.emit(EVT_UNARY_CANCELLED);
+      evts.emit(EVT_SERVER_STREAM_ENDED);
     });
 
     executeHandlers(call as never, 0, handlers);
@@ -528,7 +528,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       },
 
       onClientStreamEnded: (cb: () => void) => {
-        evts.once(EVT_IN_STREAM_ENDED, cb);
+        evts.once(EVT_CLIENT_STREAM_ENDED, cb);
       },
 
       write: (payload: V, cb?: () => void) => {
@@ -539,7 +539,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
           if (cb) {
             cb();
           }
-          evts.emit(EVT_STREAM_MSG_WRITTEN, payload);
+          evts.emit(EVT_STREAM_PAYLOAD_WRITTEN, payload);
         });
       },
 
@@ -558,7 +558,7 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       },
 
       onPayloadWritten: (cb: (payload: V) => void) => {
-        evts.on(EVT_STREAM_MSG_WRITTEN, cb);
+        evts.on(EVT_STREAM_PAYLOAD_WRITTEN, cb);
       },
 
       endServerStream: () => {
@@ -567,18 +567,18 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
         }
         call.serverStreamEnded = true;
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_SERVER_STREAM_ENDED);
       },
 
       onServerStreamEnded: (cb: (err?: grpc.StatusObject | null) => void) => {
-        evts.once(EVT_OUT_STREAM_ENDED, cb);
+        evts.once(EVT_SERVER_STREAM_ENDED, cb);
       },
     };
 
     core.once('end', () => {
       if (!call.clientStreamEnded) {
         call.clientStreamEnded = true;
-        evts.emit(EVT_IN_STREAM_ENDED);
+        evts.emit(EVT_CLIENT_STREAM_ENDED);
       }
     });
 
@@ -589,12 +589,12 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       }
       if (!call.clientStreamEnded) {
         call.clientStreamEnded = true;
-        evts.emit(EVT_IN_STREAM_ENDED);
+        evts.emit(EVT_CLIENT_STREAM_ENDED);
       }
       if (!call.serverStreamEnded) {
         call.serverStreamEnded = true;
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_SERVER_STREAM_ENDED);
       }
     });
 
@@ -608,12 +608,12 @@ function wrapBidiStreamingCall<T extends jspb.Message, V extends jspb.Message>(
       call.cancelled = true;
       if (!call.clientStreamEnded) {
         call.clientStreamEnded = true;
-        evts.emit(EVT_IN_STREAM_ENDED);
+        evts.emit(EVT_CLIENT_STREAM_ENDED);
       }
       if (!call.serverStreamEnded) {
         call.serverStreamEnded = true;
         core.end();
-        evts.emit(EVT_OUT_STREAM_ENDED);
+        evts.emit(EVT_SERVER_STREAM_ENDED);
       }
     });
 
