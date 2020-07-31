@@ -123,7 +123,7 @@ describe('Unary Calls', () => {
       server = await createTestServer({
         rpcTest: chain(
           TestService.rpcTest,
-          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             const resp = new TestMessage();
@@ -131,7 +131,7 @@ describe('Unary Calls', () => {
             call.sendUnaryData(resp);
             // The second send should do nothing
             call.sendUnaryData(resp);
-            done();
+            next();
           },
         ),
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
@@ -184,7 +184,7 @@ describe('Unary Calls', () => {
       server = await createTestServer({
         rpcTest: chain(
           TestService.rpcTest,
-          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
@@ -198,7 +198,7 @@ describe('Unary Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            done();
+            next();
           },
         ),
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
@@ -264,7 +264,7 @@ describe('Unary Calls', () => {
       server = await createTestServer({
         rpcTest: chain(
           TestService.rpcTest,
-          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerUnaryCall<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.sendUnaryErr({
@@ -272,7 +272,7 @@ describe('Unary Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            done();
+            next();
           },
         ),
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
@@ -397,13 +397,13 @@ describe('Client Streaming Calls', () => {
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
-            call.onStreamData((payload: TestMessage, tdone: lib.DoneFunction) => {
+            call.onStreamData((payload: TestMessage, tnext: lib.NextFunction) => {
               payloadsFromClient.push(payload);
-              tdone();
+              tnext();
             });
             call.onClientStreamEnded(() => {
               const payload = new TestMessage();
@@ -412,7 +412,7 @@ describe('Client Streaming Calls', () => {
               // Second send should be ignored by the library
               call.sendUnaryData(payload);
             });
-            done();
+            next();
           },
         ),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -480,7 +480,7 @@ describe('Client Streaming Calls', () => {
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
@@ -495,7 +495,7 @@ describe('Client Streaming Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            done();
+            next();
           },
         ),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -564,7 +564,7 @@ describe('Client Streaming Calls', () => {
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
@@ -573,7 +573,7 @@ describe('Client Streaming Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            done();
+            next();
           },
         ),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -647,11 +647,11 @@ describe('Client Streaming Calls', () => {
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.sendUnaryData(new TestMessage());
           },
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             handler2 = true;
             call.onUnaryResponseSent(() => callCounts.onUnaryResponseSent++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
-            done();
+            next();
           },
         ),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -707,10 +707,10 @@ describe('Client Streaming Calls', () => {
         rpcTest: chain(TestService.rpcTest, () => 0),
         clientStreamTest: chain(
           TestService.clientStreamTest,
-          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerReadableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
-            done();
+            next();
           },
         ),
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
@@ -903,7 +903,7 @@ describe('Server Streaming Calls', () => {
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
         serverStreamTest: chain(
           TestService.serverStreamTest,
-          async (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          async (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onPayloadWritten(() => callCounts.onPayloadWritten++);
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
@@ -923,7 +923,7 @@ describe('Server Streaming Calls', () => {
             call.endServerStream();
             // Third send should do nothing
             call.write(msg);
-            done();
+            next();
           },
         ),
         biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
@@ -979,14 +979,14 @@ describe('Server Streaming Calls', () => {
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
         serverStreamTest: chain(
           TestService.serverStreamTest,
-          async (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          async (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             const msg = new TestMessage();
             msg.setText('FromServer_0');
             call.write(msg);
             call.endServerStream();
-            done();
+            next();
           },
         ),
         biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
@@ -1038,7 +1038,7 @@ describe('Server Streaming Calls', () => {
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
         serverStreamTest: chain(
           TestService.serverStreamTest,
-          (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.writeErr({
@@ -1054,7 +1054,7 @@ describe('Server Streaming Calls', () => {
               details: 'Invalid token',
             });
 
-            done();
+            next();
           },
         ),
         biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
@@ -1118,7 +1118,7 @@ describe('Server Streaming Calls', () => {
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
         serverStreamTest: chain(
           TestService.serverStreamTest,
-          (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.writeErr({
@@ -1126,7 +1126,7 @@ describe('Server Streaming Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            done();
+            next();
           },
         ),
         biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
@@ -1187,11 +1187,11 @@ describe('Server Streaming Calls', () => {
         clientStreamTest: chain(TestService.clientStreamTest, () => 0),
         serverStreamTest: chain(
           TestService.serverStreamTest,
-          (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerWritableStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onUnaryCancelled(() => callCounts.onUnaryCancelled++);
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
-            done();
+            next();
           },
         ),
         biDirStreamTest: chain(TestService.biDirStreamTest, () => 0),
@@ -1380,15 +1380,15 @@ describe('Duplex Streaming Calls', () => {
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
         biDirStreamTest: chain(
           TestService.biDirStreamTest,
-          async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onPayloadWritten(() => callCounts.onPayloadWritten++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
 
-            call.onStreamData((payload, tdone) => {
+            call.onStreamData((payload, tnext) => {
               payloadsFromClient.push(payload);
-              tdone();
+              tnext();
             });
 
             await new Promise((resolve) => setTimeout(() => resolve(), 100));
@@ -1408,7 +1408,7 @@ describe('Duplex Streaming Calls', () => {
 
             // Third send should do nothing
             call.write(msg, () => callCounts.writeCb++);
-            done();
+            next();
           },
         ),
       });
@@ -1482,7 +1482,7 @@ describe('Duplex Streaming Calls', () => {
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
         biDirStreamTest: chain(
           TestService.biDirStreamTest,
-          async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          async (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
@@ -1494,7 +1494,7 @@ describe('Duplex Streaming Calls', () => {
             msg.setText('FromServer_0');
             call.write(msg);
             call.endServerStream();
-            done();
+            next();
           },
         ),
       });
@@ -1551,7 +1551,7 @@ describe('Duplex Streaming Calls', () => {
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
         biDirStreamTest: chain(
           TestService.biDirStreamTest,
-          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
@@ -1568,7 +1568,7 @@ describe('Duplex Streaming Calls', () => {
               details: 'Invalid token',
             });
 
-            done();
+            next();
           },
         ),
       });
@@ -1636,7 +1636,7 @@ describe('Duplex Streaming Calls', () => {
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
         biDirStreamTest: chain(
           TestService.biDirStreamTest,
-          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
@@ -1645,7 +1645,7 @@ describe('Duplex Streaming Calls', () => {
               metadata: new grpc.Metadata(),
               details: 'Invalid token',
             });
-            done();
+            next();
           },
         ),
       });
@@ -1709,11 +1709,11 @@ describe('Duplex Streaming Calls', () => {
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
         biDirStreamTest: chain(
           TestService.biDirStreamTest,
-          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
-            done();
+            next();
           },
         ),
       });
@@ -1770,13 +1770,13 @@ describe('Duplex Streaming Calls', () => {
         serverStreamTest: chain(TestService.serverStreamTest, () => 0),
         biDirStreamTest: chain(
           TestService.biDirStreamTest,
-          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+          (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
             _call = call;
             call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
             call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
             // Simulate an internal failure by emitting directly on the stream
             call.core.emit('error', new Error('Some internal streaming error'));
-            done();
+            next();
           },
         ),
       });
@@ -1833,11 +1833,11 @@ describe('Duplex Streaming Calls', () => {
           serverStreamTest: chain(TestService.serverStreamTest, () => 0),
           biDirStreamTest: chain(
             TestService.biDirStreamTest,
-            (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, done: lib.DoneFunction) => {
+            (call: lib.ChainServerDuplexStream<TestMessage, TestMessage>, next: lib.NextFunction) => {
               _call = call;
               call.onServerStreamEnded(() => callCounts.onServerStreamEnded++);
               call.onClientStreamEnded(() => callCounts.onClientStreamEnded++);
-              done();
+              next();
             },
           ),
         },

@@ -28,14 +28,14 @@ export interface Context {
  * inbound stream data (if the particular call has a request stream) and/or
  * continue to the next call handler (if there is one).
  *
- * In the case of Tunnels, DoneFunction serves a similar purpose, in
+ * In the case of Tunnels, NextFunction serves a similar purpose, in
  * that it instructs the Tunnel to either continue to the next Gate or
  * consider the payload as `ready for transport` (in the case of outgoing
  * tunnels).
  */
-export type DoneFunction = () => void;
+export type NextFunction = () => void;
 
-export type TunnelGate<T extends jspb.Message> = (payload: T, tdone: DoneFunction) => void;
+export type TunnelGate<T extends jspb.Message> = (payload: T, tnext: NextFunction) => void;
 
 export class Tunnel<T extends jspb.Message> {
   private gates: TunnelGate<T>[] = [];
@@ -144,7 +144,7 @@ export type GenericServiceCall =
  */
 export type UnaryCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerUnaryCall<T, V>,
-  done: DoneFunction,
+  next: NextFunction,
 ) => void;
 
 /**
@@ -152,7 +152,7 @@ export type UnaryCallHandler<T extends jspb.Message, V extends jspb.Message> = (
  */
 export type ClientStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerReadableStream<T, V>,
-  done: DoneFunction,
+  next: NextFunction,
 ) => void;
 
 /**
@@ -160,7 +160,7 @@ export type ClientStreamingCallHandler<T extends jspb.Message, V extends jspb.Me
  */
 export type ServerStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerWritableStream<T, V>,
-  done: DoneFunction,
+  next: NextFunction,
 ) => void;
 
 /**
@@ -168,10 +168,10 @@ export type ServerStreamingCallHandler<T extends jspb.Message, V extends jspb.Me
  */
 export type BidiStreamingCallHandler<T extends jspb.Message, V extends jspb.Message> = (
   call: ChainServerDuplexStream<T, V>,
-  done: DoneFunction,
+  next: NextFunction,
 ) => void;
 
-export type GenericCallHandler = (call: GenericServiceCall, done: DoneFunction) => void;
+export type GenericCallHandler = (call: GenericServiceCall, next: NextFunction) => void;
 
 export type ChainCallHandler<T extends jspb.Message, V extends jspb.Message> =
   | BidiStreamingCallHandler<T, V>
