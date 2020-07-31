@@ -1,6 +1,6 @@
 {
   "name": "@mdkr/grpc-chain",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Enables the use of middleware for Node gRPC servers",
   "main": "./dist/index.js",
   "typings": "./dist/index.d.ts",
