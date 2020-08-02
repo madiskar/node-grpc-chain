@@ -1,1 +1,1 @@
-![Node.js CI](https://github.com/madiskar/node-grpc-chain/workflows/Node.js%20CI/badge.svg)
+![build](https://github.com/madiskar/node-grpc-chain/workflows/build/badge.svg) [![Coverage Status](https://coveralls.io/repos/github/madiskar/node-grpc-chain/badge.svg?branch=master)](https://coveralls.io/github/madiskar/node-grpc-chain?branch=master)
