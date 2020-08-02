@@ -19,7 +19,8 @@
   "reporter": [
     "html",
     "text",
-    "text-summary"
+    "text-summary",
+    "lcov"
   ],
   "all": false,
   "instrument": true
